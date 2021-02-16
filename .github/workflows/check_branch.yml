@@ -1,21 +1,14 @@
-# We bidirectionally synchronize github.com/ruby/ruby.git's master branch and
-# git.ruby-lang.org/ruby.git's master branch.
-# We can use a pull request's merge button only on the master branch.
-#
-# Therefore, we require to pass this "check_branch" on all protected branches
-# to prevent us from accidentally pushing commits to GitHub directly.
-#
-# Details: https://bugs.ruby-lang.org/issues/16094
+# A safeguard for accidentally opening a PR against upstream Github repo.
 name: Pull Request
 on: [pull_request]
 jobs:
   check_branch:
     runs-on: ubuntu-latest
     steps:
-      - name: Check if branch is master
+      - name: Check if branch is microjit
         run: |
-          if [ "$BASE_REF" != master ]; then
-            echo "Only master branch accepts a pull request, but it's '$BASE_REF'."
+          if [ "$BASE_REF" != microjit ]; then
+            echo "Only the microjit branch accepts pull requests, but it's '$BASE_REF'."
             exit 1
           fi
         env:
