@@ -29,7 +29,7 @@
 #include "internal/object.h"
 #include "internal/thread.h"
 #include "internal/variable.h"
-#include "internal/scheduler.h"
+#include "ruby/fiber/scheduler.h"
 #include "iseq.h"
 #include "mjit.h"
 #include "probes.h"
@@ -147,13 +147,13 @@ ruby_options(int argc, char **argv)
 }
 
 static void
-rb_ec_scheduler_finalize(rb_execution_context_t *ec)
+rb_ec_fiber_scheduler_finalize(rb_execution_context_t *ec)
 {
     enum ruby_tag_type state;
 
     EC_PUSH_TAG(ec);
     if ((state = EC_EXEC_TAG()) == TAG_NONE) {
-        rb_scheduler_set(Qnil);
+        rb_fiber_scheduler_set(Qnil);
     }
     else {
         state = error_handle(ec, state);
@@ -165,7 +165,7 @@ static void
 rb_ec_teardown(rb_execution_context_t *ec)
 {
     // If the user code defined a scheduler for the top level thread, run it:
-    rb_ec_scheduler_finalize(ec);
+    rb_ec_fiber_scheduler_finalize(ec);
 
     EC_PUSH_TAG(ec);
     if (EC_EXEC_TAG() == TAG_NONE) {
@@ -1021,7 +1021,7 @@ rb_vrescue2(VALUE (* b_proc) (VALUE), VALUE data1,
     else if (result) {
 	/* escape from r_proc */
 	if (state == TAG_RETRY) {
-	    state = 0;
+	    state = TAG_NONE;
 	    ec->errinfo = Qnil;
 	    result = Qfalse;
 	    goto retry_entry;
@@ -1033,17 +1033,21 @@ rb_vrescue2(VALUE (* b_proc) (VALUE), VALUE data1,
 	if (state == TAG_RAISE) {
 	    int handle = FALSE;
 	    VALUE eclass;
+	    va_list ap;
 
-	    while ((eclass = va_arg(args, VALUE)) != 0) {
+	    result = Qnil;
+	    /* reuses args when raised again after retrying in r_proc */
+	    va_copy(ap, args);
+	    while ((eclass = va_arg(ap, VALUE)) != 0) {
 		if (rb_obj_is_kind_of(ec->errinfo, eclass)) {
 		    handle = TRUE;
 		    break;
 		}
 	    }
+	    va_end(ap);
 
 	    if (handle) {
-		result = Qnil;
-		state = 0;
+		state = TAG_NONE;
 		if (r_proc) {
 		    result = (*r_proc) (data2, ec->errinfo);
 		}

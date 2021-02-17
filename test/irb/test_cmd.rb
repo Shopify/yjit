@@ -48,7 +48,8 @@ module TestIRB
         Ruby\sversion: .+\n
         IRB\sversion:\sirb .+\n
         InputMethod:\sReidlineInputMethod\swith\sReline .+ and .+\n
-        \.irbrc\spath: .+
+        \.irbrc\spath: .+\n
+        RUBY_PLATFORM: .+
       }x
       assert_match expected, irb.context.main.irb_info.to_s
     end
@@ -67,7 +68,8 @@ module TestIRB
         Ruby\sversion: .+\n
         IRB\sversion:\sirb .+\n
         InputMethod:\sReadlineInputMethod\swith .+ and .+\n
-        \.irbrc\spath: .+
+        \.irbrc\spath: .+\n
+        RUBY_PLATFORM: .+
       }x
       assert_match expected, irb.context.main.irb_info.to_s
     end
@@ -89,6 +91,7 @@ module TestIRB
         Ruby\sversion: .+\n
         IRB\sversion:\sirb .+\n
         InputMethod:\sReidlineInputMethod\swith\sReline\s[^ ]+(?!\sand\s.+)\n
+        RUBY_PLATFORM: .+\n
         \z
       }x
       assert_match expected, irb.context.main.irb_info.to_s
@@ -115,6 +118,7 @@ module TestIRB
         Ruby\sversion: .+\n
         IRB\sversion:\sirb .+\n
         InputMethod:\sReadlineInputMethod\swith\s(?~.*\sand\s.+)\n
+        RUBY_PLATFORM: .+\n
         \z
       }x
       assert_match expected, irb.context.main.irb_info.to_s
@@ -274,6 +278,47 @@ module TestIRB
       end
       assert_empty err
       assert_match(/\A=> 3\nCUSTOM is added\.\n=> nil\ncustom processing time: .+\n=> 3\n=> nil\n=> 3\n/, out)
+    end
+
+    def test_measure_with_proc
+      IRB.init_config(nil)
+      IRB.conf[:PROMPT] = {
+        DEFAULT: {
+          PROMPT_I: '> ',
+          PROMPT_S: '> ',
+          PROMPT_C: '> ',
+          PROMPT_N: '> '
+        }
+      }
+      IRB.conf[:VERBOSE] = false
+      IRB.conf[:PROMPT_MODE] = :DEFAULT
+      IRB.conf[:MEASURE] = false
+      input = TestInputMethod.new([
+        "3\n",
+        "measure { |context, code, line_no, &block|\n",
+        "  result = block.()\n",
+        "  puts 'aaa' if IRB.conf[:MEASURE]\n",
+        "  result\n",
+        "}\n",
+        "3\n",
+        "measure { |context, code, line_no, &block|\n",
+        "  result = block.()\n",
+        "  puts 'bbb' if IRB.conf[:MEASURE]\n",
+        "  result\n",
+        "}\n",
+        "3\n",
+        "measure :off\n",
+        "3\n",
+      ])
+      c = Class.new(Object)
+      irb = IRB::Irb.new(IRB::WorkSpace.new(c.new), input)
+      irb.context.return_format = "=> %s\n"
+      out, err = capture_output do
+        irb.eval_input
+      end
+      assert_empty err
+      assert_match(/\A=> 3\nBLOCK is added\.\n=> nil\naaa\n=> 3\nBLOCK is added.\naaa\n=> nil\nbbb\n=> 3\n=> nil\n=> 3\n/, out)
+      assert_empty(c.class_variables)
     end
 
     def test_irb_source

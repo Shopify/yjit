@@ -81,7 +81,7 @@
 #include "internal/io.h"
 #include "internal/object.h"
 #include "internal/proc.h"
-#include "internal/scheduler.h"
+#include "ruby/fiber/scheduler.h"
 #include "internal/signal.h"
 #include "internal/thread.h"
 #include "internal/time.h"
@@ -551,8 +551,8 @@ rb_threadptr_join_list_wakeup(rb_thread_t *thread)
     while (join_list) {
         rb_thread_t *target_thread = join_list->thread;
 
-        if (target_thread->scheduler != Qnil) {
-            rb_scheduler_unblock(target_thread->scheduler, target_thread->self, rb_fiberptr_self(join_list->fiber));
+        if (target_thread->scheduler != Qnil && rb_fiberptr_blocking(join_list->fiber) == 0) {
+            rb_fiber_scheduler_unblock(target_thread->scheduler, target_thread->self, rb_fiberptr_self(join_list->fiber));
         } else {
             rb_threadptr_interrupt(target_thread);
 
@@ -772,7 +772,7 @@ thread_do_start(rb_thread_t *th)
         rb_bug("unreachable");
     }
 
-    rb_scheduler_set(Qnil);
+    rb_fiber_scheduler_set(Qnil);
 }
 
 void rb_ec_clear_current_thread_trace_func(const rb_execution_context_t *ec);
@@ -1178,10 +1178,10 @@ thread_join_sleep(VALUE arg)
     }
 
     while (target_th->status != THREAD_KILLED) {
-        VALUE scheduler = rb_scheduler_current();
+        VALUE scheduler = rb_fiber_scheduler_current();
 
         if (scheduler != Qnil) {
-            rb_scheduler_block(scheduler, target_th->self, p->timeout);
+            rb_fiber_scheduler_block(scheduler, target_th->self, p->timeout);
         } else if (!limit) {
             th->status = THREAD_STOPPED_FOREVER;
             rb_ractor_sleeper_threads_inc(th->ractor);
@@ -1525,9 +1525,9 @@ rb_thread_sleep_interruptible(void)
 static void
 rb_thread_sleep_deadly_allow_spurious_wakeup(VALUE blocker)
 {
-    VALUE scheduler = rb_scheduler_current();
+    VALUE scheduler = rb_fiber_scheduler_current();
     if (scheduler != Qnil) {
-        rb_scheduler_block(scheduler, blocker, Qnil);
+        rb_fiber_scheduler_block(scheduler, blocker, Qnil);
     } else {
         thread_debug("rb_thread_sleep_deadly_allow_spurious_wakeup\n");
         sleep_forever(GET_THREAD(), SLEEP_DEADLOCKABLE);
@@ -3213,8 +3213,7 @@ rb_thread_report_exc_set(VALUE thread, VALUE val)
  *  call-seq:
  *     thr.group   -> thgrp or nil
  *
- *  Returns the ThreadGroup which contains the given thread, or returns +nil+
- *  if +thr+ is not a member of any group.
+ *  Returns the ThreadGroup which contains the given thread.
  *
  *     Thread.main.group   #=> #<ThreadGroup:0x4029d914>
  */
@@ -3222,8 +3221,7 @@ rb_thread_report_exc_set(VALUE thread, VALUE val)
 VALUE
 rb_thread_group(VALUE thread)
 {
-    VALUE group = rb_thread_ptr(thread)->thgroup;
-    return group == 0 ? Qnil : group;
+    return rb_thread_ptr(thread)->thgroup;
 }
 
 static const char *
@@ -4972,10 +4970,6 @@ thgroup_add(VALUE group, VALUE thread)
     TypedData_Get_Struct(group, struct thgroup, &thgroup_data_type, data);
     if (data->enclosed) {
 	rb_raise(rb_eThreadError, "can't move to the enclosed thread group");
-    }
-
-    if (!target_th->thgroup) {
-	return Qnil;
     }
 
     if (OBJ_FROZEN(target_th->thgroup)) {
