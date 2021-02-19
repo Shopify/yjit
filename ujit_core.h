@@ -98,8 +98,7 @@ typedef struct BranchEntry
 
 } branch_t;
 
-
-typedef rb_darray(uint32_t) offset_array_t;
+typedef rb_darray(uint32_t) int32_array_t;
 
 /**
 Basic block version
@@ -122,14 +121,13 @@ typedef struct ujit_block_version
     uint32_t end_pos;
 
     // List of incoming branches indices
-    uint32_t *incoming;
-    uint32_t num_incoming;
-
-    // Next block version for this blockid (singly-linked list)
-    struct ujit_block_version *next;
+    int32_array_t incoming;
 
     // Offsets for GC managed objects in the mainline code block
-    offset_array_t gc_object_offsets;
+    int32_array_t gc_object_offsets;
+  
+    // Next block version for this blockid (singly-linked list)
+    struct ujit_block_version *next;
 
     // GC managed objects that this block depend on
     struct {
