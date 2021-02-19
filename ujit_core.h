@@ -98,6 +98,8 @@ typedef struct BranchEntry
 
 } branch_t;
 
+typedef rb_darray(uint32_t) int32_array_t;
+
 /**
 Basic block version
 Represents a portion of an iseq compiled with a given context
@@ -119,8 +121,7 @@ typedef struct ujit_block_version
     uint32_t end_pos;
 
     // List of incoming branches indices
-    uint32_t *incoming;
-    uint32_t num_incoming;
+    int32_array_t incoming;
 
     // Next block version for this blockid (singly-linked list)
     struct ujit_block_version *next;
