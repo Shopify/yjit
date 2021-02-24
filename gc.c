@@ -1241,99 +1241,102 @@ RVALUE_FLAGS_AGE(VALUE flags)
 static int
 check_rvalue_consistency_force(const VALUE obj, int terminate)
 {
-    rb_objspace_t *objspace = &rb_objspace;
     int err = 0;
+    rb_objspace_t *objspace = &rb_objspace;
 
-    if (SPECIAL_CONST_P(obj)) {
-        fprintf(stderr, "check_rvalue_consistency: %p is a special const.\n", (void *)obj);
-        err++;
+    RB_VM_LOCK_ENTER_NO_BARRIER();
+    {
+        if (SPECIAL_CONST_P(obj)) {
+            fprintf(stderr, "check_rvalue_consistency: %p is a special const.\n", (void *)obj);
+            err++;
+        }
+        else if (!is_pointer_to_heap(objspace, (void *)obj)) {
+            /* check if it is in tomb_pages */
+            struct heap_page *page = NULL;
+            list_for_each(&heap_tomb->pages, page, page_node) {
+                if (&page->start[0] <= (RVALUE *)obj &&
+                    (RVALUE *)obj < &page->start[page->total_slots]) {
+                    fprintf(stderr, "check_rvalue_consistency: %p is in a tomb_heap (%p).\n",
+                            (void *)obj, (void *)page);
+                    err++;
+                    goto skip;
+                }
+            }
+            bp();
+            fprintf(stderr, "check_rvalue_consistency: %p is not a Ruby object.\n", (void *)obj);
+            err++;
+          skip:
+            ;
+        }
+        else {
+            const int wb_unprotected_bit = RVALUE_WB_UNPROTECTED_BITMAP(obj) != 0;
+            const int uncollectible_bit = RVALUE_UNCOLLECTIBLE_BITMAP(obj) != 0;
+            const int mark_bit = RVALUE_MARK_BITMAP(obj) != 0;
+            const int marking_bit = RVALUE_MARKING_BITMAP(obj) != 0, remembered_bit = marking_bit;
+            const int age = RVALUE_FLAGS_AGE(RBASIC(obj)->flags);
+
+            if (GET_HEAP_PAGE(obj)->flags.in_tomb) {
+                fprintf(stderr, "check_rvalue_consistency: %s is in tomb page.\n", obj_info(obj));
+                err++;
+            }
+            if (BUILTIN_TYPE(obj) == T_NONE) {
+                fprintf(stderr, "check_rvalue_consistency: %s is T_NONE.\n", obj_info(obj));
+                err++;
+            }
+            if (BUILTIN_TYPE(obj) == T_ZOMBIE) {
+                fprintf(stderr, "check_rvalue_consistency: %s is T_ZOMBIE.\n", obj_info(obj));
+                err++;
+            }
+
+            obj_memsize_of((VALUE)obj, FALSE);
+
+            /* check generation
+             *
+             * OLD == age == 3 && old-bitmap && mark-bit (except incremental marking)
+             */
+            if (age > 0 && wb_unprotected_bit) {
+                fprintf(stderr, "check_rvalue_consistency: %s is not WB protected, but age is %d > 0.\n", obj_info(obj), age);
+                err++;
+            }
+
+            if (!is_marking(objspace) && uncollectible_bit && !mark_bit) {
+                fprintf(stderr, "check_rvalue_consistency: %s is uncollectible, but is not marked while !gc.\n", obj_info(obj));
+                err++;
+            }
+
+            if (!is_full_marking(objspace)) {
+                if (uncollectible_bit && age != RVALUE_OLD_AGE && !wb_unprotected_bit) {
+                    fprintf(stderr, "check_rvalue_consistency: %s is uncollectible, but not old (age: %d) and not WB unprotected.\n",
+                            obj_info(obj), age);
+                    err++;
+                }
+                if (remembered_bit && age != RVALUE_OLD_AGE) {
+                    fprintf(stderr, "check_rvalue_consistency: %s is remembered, but not old (age: %d).\n",
+                            obj_info(obj), age);
+                    err++;
+                }
+            }
+
+            /*
+             * check coloring
+             *
+             *               marking:false marking:true
+             * marked:false  white         *invalid*
+             * marked:true   black         grey
+             */
+            if (is_incremental_marking(objspace) && marking_bit) {
+                if (!is_marking(objspace) && !mark_bit) {
+                    fprintf(stderr, "check_rvalue_consistency: %s is marking, but not marked.\n", obj_info(obj));
+                    err++;
+                }
+            }
+        }
     }
-    else if (!is_pointer_to_heap(objspace, (void *)obj)) {
-        /* check if it is in tomb_pages */
-        struct heap_page *page = NULL;
-        list_for_each(&heap_tomb->pages, page, page_node) {
-            if (&page->start[0] <= (RVALUE *)obj &&
-                (RVALUE *)obj < &page->start[page->total_slots]) {
-                fprintf(stderr, "check_rvalue_consistency: %p is in a tomb_heap (%p).\n",
-                        (void *)obj, (void *)page);
-                err++;
-                goto skip;
-            }
-        }
-        bp();
-        fprintf(stderr, "check_rvalue_consistency: %p is not a Ruby object.\n", (void *)obj);
-        err++;
-      skip:
-        ;
-    }
-    else {
-        const int wb_unprotected_bit = RVALUE_WB_UNPROTECTED_BITMAP(obj) != 0;
-        const int uncollectible_bit = RVALUE_UNCOLLECTIBLE_BITMAP(obj) != 0;
-        const int mark_bit = RVALUE_MARK_BITMAP(obj) != 0;
-        const int marking_bit = RVALUE_MARKING_BITMAP(obj) != 0, remembered_bit = marking_bit;
-        const int age = RVALUE_FLAGS_AGE(RBASIC(obj)->flags);
-
-        if (GET_HEAP_PAGE(obj)->flags.in_tomb) {
-            fprintf(stderr, "check_rvalue_consistency: %s is in tomb page.\n", obj_info(obj));
-            err++;
-        }
-        if (BUILTIN_TYPE(obj) == T_NONE) {
-            fprintf(stderr, "check_rvalue_consistency: %s is T_NONE.\n", obj_info(obj));
-            err++;
-        }
-        if (BUILTIN_TYPE(obj) == T_ZOMBIE) {
-            fprintf(stderr, "check_rvalue_consistency: %s is T_ZOMBIE.\n", obj_info(obj));
-            err++;
-        }
-
-        obj_memsize_of((VALUE)obj, FALSE);
-
-        /* check generation
-         *
-         * OLD == age == 3 && old-bitmap && mark-bit (except incremental marking)
-         */
-        if (age > 0 && wb_unprotected_bit) {
-            fprintf(stderr, "check_rvalue_consistency: %s is not WB protected, but age is %d > 0.\n", obj_info(obj), age);
-            err++;
-        }
-
-        if (!is_marking(objspace) && uncollectible_bit && !mark_bit) {
-            fprintf(stderr, "check_rvalue_consistency: %s is uncollectible, but is not marked while !gc.\n", obj_info(obj));
-            err++;
-        }
-
-        if (!is_full_marking(objspace)) {
-            if (uncollectible_bit && age != RVALUE_OLD_AGE && !wb_unprotected_bit) {
-                fprintf(stderr, "check_rvalue_consistency: %s is uncollectible, but not old (age: %d) and not WB unprotected.\n",
-                        obj_info(obj), age);
-                err++;
-            }
-            if (remembered_bit && age != RVALUE_OLD_AGE) {
-                fprintf(stderr, "check_rvalue_consistency: %s is remembered, but not old (age: %d).\n",
-                        obj_info(obj), age);
-                err++;
-            }
-        }
-
-        /*
-         * check coloring
-         *
-         *               marking:false marking:true
-         * marked:false  white         *invalid*
-         * marked:true   black         grey
-         */
-        if (is_incremental_marking(objspace) && marking_bit) {
-            if (!is_marking(objspace) && !mark_bit) {
-                fprintf(stderr, "check_rvalue_consistency: %s is marking, but not marked.\n", obj_info(obj));
-                err++;
-            }
-        }
-    }
+    RB_VM_LOCK_LEAVE_NO_BARRIER();
 
     if (err > 0 && terminate) {
         rb_bug("check_rvalue_consistency_force: there is %d errors.", err);
     }
-
     return err;
 }
 
@@ -2073,11 +2076,14 @@ gc_event_hook_body(rb_execution_context_t *ec, rb_objspace_t *objspace, const rb
 #define gc_event_hook_available_p(objspace) ((objspace)->flags.has_hook)
 #define gc_event_hook_needed_p(objspace, event) ((objspace)->hook_events & (event))
 
-#define gc_event_hook(objspace, event, data) do { \
+#define gc_event_hook_prep(objspace, event, data, prep) do { \
     if (UNLIKELY(gc_event_hook_needed_p(objspace, event))) { \
+        prep; \
 	gc_event_hook_body(GET_EC(), (objspace), (event), (data)); \
     } \
 } while (0)
+
+#define gc_event_hook(objspace, event, data) gc_event_hook_prep(objspace, event, data, (void)0)
 
 static inline VALUE
 newobj_init(VALUE klass, VALUE flags, int wb_protected, rb_objspace_t *objspace, VALUE obj)
@@ -2224,6 +2230,16 @@ ractor_cache_slots(rb_objspace_t *objspace, rb_ractor_t *cr)
     asan_poison_object((VALUE)cr->newobj_cache.freelist);
 }
 
+static inline VALUE
+newobj_fill(VALUE obj, VALUE v1, VALUE v2, VALUE v3)
+{
+    RVALUE *p = (RVALUE *)obj;
+    p->as.values.v1 = v1;
+    p->as.values.v2 = v2;
+    p->as.values.v3 = v3;
+    return obj;
+}
+
 ALWAYS_INLINE(static VALUE newobj_slowpath(VALUE klass, VALUE flags, rb_objspace_t *objspace, rb_ractor_t *cr, int wb_protected));
 
 static inline VALUE
@@ -2254,7 +2270,7 @@ newobj_slowpath(VALUE klass, VALUE flags, rb_objspace_t *objspace, rb_ractor_t *
         }
         GC_ASSERT(obj != 0);
         newobj_init(klass, flags, wb_protected, objspace, obj);
-        gc_event_hook(objspace, RUBY_INTERNAL_EVENT_NEWOBJ, obj);
+        gc_event_hook_prep(objspace, RUBY_INTERNAL_EVENT_NEWOBJ, obj, newobj_fill(obj, 0, 0, 0));
     }
     RB_VM_LOCK_LEAVE_CR_LEV(cr, &lev);
 
@@ -2312,16 +2328,6 @@ newobj_of0(VALUE klass, VALUE flags, int wb_protected, rb_ractor_t *cr)
           newobj_slowpath_wb_unprotected(klass, flags, objspace, cr);
     }
 
-    return obj;
-}
-
-static inline VALUE
-newobj_fill(VALUE obj, VALUE v1, VALUE v2, VALUE v3)
-{
-    RVALUE *p = (RVALUE *)obj;
-    p->as.values.v1 = v1;
-    p->as.values.v2 = v2;
-    p->as.values.v3 = v3;
     return obj;
 }
 
@@ -4860,7 +4866,6 @@ gc_page_sweep(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_
 {
     int i;
     int empty_slots = 0, freed_slots = 0, final_slots = 0;
-    int was_compacting = 0;
     RVALUE *p, *offset;
     bits_t *bits, bitset;
 
@@ -4877,7 +4882,6 @@ gc_page_sweep(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_
             asan_unpoison_memory_region(&sweep_page->freelist, sizeof(RVALUE*), false);
             sweep_page->freelist = NULL;
             asan_poison_memory_region(&sweep_page->freelist, sizeof(RVALUE*));
-            was_compacting = 1;
         }
     }
 
@@ -4958,13 +4962,6 @@ gc_page_sweep(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_
                             MARK_IN_BITMAP(GET_HEAP_PINNED_BITS(vp), vp);
                         }
                         else {
-                            /* When we started sweeping this page, we were in
-                             * compacting mode and nulled the free list for
-                             * the page. But compaction finished, so we need to
-                             * put any T_NONE slots back on the freelist. */
-                            if (was_compacting) {
-                                heap_page_add_freeobj(objspace, sweep_page, vp);
-                            }
                             empty_slots++; /* already freed */
                         }
 			break;
@@ -8486,6 +8483,9 @@ gc_enter(rb_objspace_t *objspace, enum gc_enter_event event, unsigned int *lock_
     RB_VM_LOCK_ENTER_LEV(lock_lev);
 
     switch (event) {
+      case gc_enter_event_rest:
+        if (!is_marking(objspace)) break;
+        // fall through
       case gc_enter_event_start:
       case gc_enter_event_mark_continue:
         // stop other ractors
