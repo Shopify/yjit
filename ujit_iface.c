@@ -659,6 +659,7 @@ rb_ujit_iseq_update_references(const struct rb_iseq_constant_body *body)
     }
 }
 
+// Free the ujit resources associated with an iseq
 void
 rb_ujit_iseq_free(const struct rb_iseq_constant_body *body)
 {

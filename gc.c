@@ -823,6 +823,13 @@ enum {
     HEAP_PAGE_BITMAP_SIZE = (BITS_SIZE * HEAP_PAGE_BITMAP_LIMIT),
     HEAP_PAGE_BITMAP_PLANES = 4 /* RGENGC: mark, unprotected, uncollectible, marking */
 };
+#define HEAP_PAGE_ALIGN (1 << HEAP_PAGE_ALIGN_LOG)
+#define HEAP_PAGE_SIZE HEAP_PAGE_ALIGN
+#if defined(HAVE_MMAP) && (PAGE_SIZE <= HEAP_PAGE_SIZE)
+# define USE_MMAP_ALIGNED_ALLOC 1
+#else
+# define USE_MMAP_ALIGNED_ALLOC 0
+#endif
 
 struct heap_page {
     short total_slots;
@@ -1765,14 +1772,14 @@ heap_unlink_page(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *pag
     heap->total_slots -= page->total_slots;
 }
 
-static void rb_aligned_free(void *ptr);
+static void rb_aligned_free(void *ptr, size_t size);
 
 static void
 heap_page_free(rb_objspace_t *objspace, struct heap_page *page)
 {
     heap_allocated_pages--;
     objspace->profile.total_freed_pages++;
-    rb_aligned_free(GET_PAGE_BODY(page->start));
+    rb_aligned_free(GET_PAGE_BODY(page->start), HEAP_PAGE_SIZE);
     free(page);
 }
 
@@ -1824,7 +1831,7 @@ heap_page_allocate(rb_objspace_t *objspace)
     /* assign heap_page entry */
     page = calloc1(sizeof(struct heap_page));
     if (page == 0) {
-        rb_aligned_free(page_body);
+        rb_aligned_free(page_body, HEAP_PAGE_SIZE);
 	rb_memerror();
     }
 
@@ -9986,6 +9993,13 @@ gc_set_auto_compact(rb_execution_context_t *ec, VALUE _, VALUE v)
         rb_raise(rb_eNotImpError, "Automatic compaction isn't available on this platform");
     }
 #endif
+
+    /* If not MinGW, Windows, or does not have mmap, we cannot use mprotect for
+     * the read barrier, so we must disable automatic compaction. */
+#if !defined(__MINGW32__) && !defined(_WIN32) && !USE_MMAP_ALIGNED_ALLOC
+    rb_raise(rb_eNotImpError, "Automatic compaction isn't available on this platform");
+#endif
+
     ruby_enable_autocompact = RTEST(v);
     return v;
 }
@@ -10382,11 +10396,38 @@ rb_aligned_malloc(size_t alignment, size_t size)
 #elif defined _WIN32
     void *_aligned_malloc(size_t, size_t);
     res = _aligned_malloc(size, alignment);
-#elif defined(HAVE_POSIX_MEMALIGN)
-    if (posix_memalign(&res, alignment, size) == 0) {
-        return res;
+#elif USE_MMAP_ALIGNED_ALLOC
+    GC_ASSERT(alignment % sysconf(_SC_PAGE_SIZE) == 0);
+
+    char *ptr = mmap(NULL, alignment + size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (ptr == MAP_FAILED) {
+        return NULL;
     }
-    else {
+
+    char *aligned = ptr + alignment;
+    aligned -= ((VALUE)aligned & (alignment - 1));
+    GC_ASSERT(aligned > ptr);
+    GC_ASSERT(aligned <= ptr + alignment);
+
+    size_t start_out_of_range_size = aligned - ptr;
+    GC_ASSERT(start_out_of_range_size % sysconf(_SC_PAGE_SIZE) == 0);
+    if (start_out_of_range_size > 0) {
+        if (munmap(ptr, start_out_of_range_size)) {
+            rb_bug("rb_aligned_malloc: munmap failed for start");
+        }
+    }
+
+    size_t end_out_of_range_size = alignment - start_out_of_range_size;
+    GC_ASSERT(end_out_of_range_size % sysconf(_SC_PAGE_SIZE) == 0);
+    if (end_out_of_range_size > 0) {
+        if (munmap(aligned + size, end_out_of_range_size)) {
+            rb_bug("rb_aligned_malloc: munmap failed for end");
+        }
+    }
+
+    res = (void *)aligned;
+#elif defined(HAVE_POSIX_MEMALIGN)
+    if (posix_memalign(&res, alignment, size) != 0) {
         return NULL;
     }
 #elif defined(HAVE_MEMALIGN)
@@ -10407,13 +10448,18 @@ rb_aligned_malloc(size_t alignment, size_t size)
 }
 
 static void
-rb_aligned_free(void *ptr)
+rb_aligned_free(void *ptr, size_t size)
 {
 #if defined __MINGW32__
     __mingw_aligned_free(ptr);
 #elif defined _WIN32
     _aligned_free(ptr);
-#elif defined(HAVE_MEMALIGN) || defined(HAVE_POSIX_MEMALIGN)
+#elif USE_MMAP_ALIGNED_ALLOC
+    GC_ASSERT(size % sysconf(_SC_PAGE_SIZE) == 0);
+    if (munmap(ptr, size)) {
+        rb_bug("rb_aligned_free: munmap failed");
+    }
+#elif defined(HAVE_POSIX_MEMALIGN) || defined(HAVE_MEMALIGN)
     free(ptr);
 #else
     free(((void**)ptr)[-1]);
@@ -12402,31 +12448,34 @@ rb_raw_obj_info(char *buff, const int buff_size, VALUE obj)
             APPENDF((BUFF_ARGS, "<%s> ", rb_imemo_name(imemo_type(obj))));
 
 	    switch (imemo_type(obj)) {
-	      case imemo_ment: {
-		const rb_method_entry_t *me = &RANY(obj)->as.imemo.ment;
-		if (me->def) {
+	      case imemo_ment:
+                {
+                    const rb_method_entry_t *me = &RANY(obj)->as.imemo.ment;
+
                     APPENDF((BUFF_ARGS, ":%s (%s%s%s%s) type:%s alias:%d owner:%p defined_class:%p",
-			     rb_id2name(me->called_id),
+                             rb_id2name(me->called_id),
                              METHOD_ENTRY_VISI(me) == METHOD_VISI_PUBLIC ?  "pub" :
                              METHOD_ENTRY_VISI(me) == METHOD_VISI_PRIVATE ? "pri" : "pro",
                              METHOD_ENTRY_COMPLEMENTED(me) ? ",cmp" : "",
                              METHOD_ENTRY_CACHED(me) ? ",cc" : "",
                              METHOD_ENTRY_INVALIDATED(me) ? ",inv" : "",
-                             rb_method_type_name(me->def->type),
-                             me->def->alias_count,
+                             me->def ? rb_method_type_name(me->def->type) : "NULL",
+                             me->def ? me->def->alias_count : -1,
                              (void *)me->owner, // obj_info(me->owner),
                              (void *)me->defined_class)); //obj_info(me->defined_class)));
 
-                    if (me->def->type == VM_METHOD_TYPE_ISEQ) {
-                        // APPENDF((BUFF_ARGS, " (iseq:%p)", (void *)me->def->body.iseq.iseqptr));
-                        APPENDF((BUFF_ARGS, " (iseq:%s)", obj_info((VALUE)me->def->body.iseq.iseqptr)));
+                    if (me->def) {
+                        switch (me->def->type) {
+                          case VM_METHOD_TYPE_ISEQ:
+                            APPENDF((BUFF_ARGS, " (iseq:%s)", obj_info((VALUE)me->def->body.iseq.iseqptr)));
+                            break;
+                          default:
+                            break;
+                        }
                     }
-		}
-		else {
-                    APPENDF((BUFF_ARGS, "%s", rb_id2name(me->called_id)));
-		}
-		break;
-	      }
+
+                    break;
+                }
 	      case imemo_iseq: {
 		const rb_iseq_t *iseq = (const rb_iseq_t *)obj;
                 rb_raw_iseq_info(BUFF_ARGS, iseq);
