@@ -1416,8 +1416,6 @@ gen_oswb_iseq(jitstate_t* jit, ctx_t* ctx, struct rb_call_data * cd, const rb_ca
         return UJIT_CANT_COMPILE;
     }
 
-    rb_gc_register_mark_object((VALUE)iseq); // FIXME: intentional LEAK!
-
     // Create a size-exit to fall back to the interpreter
     uint8_t* side_exit = ujit_side_exit(jit, ctx);
 
