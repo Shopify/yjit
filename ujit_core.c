@@ -271,7 +271,7 @@ ujit_branches_update_references(void)
 }
 
 // Compile a new block version immediately
-block_t* gen_block_version(blockid_t blockid, const ctx_t* start_ctx)
+block_t* gen_block_version(blockid_t blockid, const ctx_t* start_ctx, rb_execution_context_t* ec)
 {
     // Copy the context to avoid mutating it
     ctx_t ctx_copy = *start_ctx;
@@ -286,7 +286,7 @@ block_t* gen_block_version(blockid_t blockid, const ctx_t* start_ctx)
     block_t* block = first_block;
 
     // Generate code for the first block
-    ujit_gen_block(ctx, block);
+    ujit_gen_block(ctx, block, ec);
 
     // Keep track of the new block version
     add_block_version(block->blockid, block);
@@ -320,7 +320,7 @@ block_t* gen_block_version(blockid_t blockid, const ctx_t* start_ctx)
         memcpy(&block->ctx, ctx, sizeof(ctx_t));
 
         // Generate code for the current block
-        ujit_gen_block(ctx, block);
+        ujit_gen_block(ctx, block, ec);
 
         // Keep track of the new block version
         add_block_version(block->blockid, block);
@@ -336,7 +336,7 @@ block_t* gen_block_version(blockid_t blockid, const ctx_t* start_ctx)
 }
 
 // Generate a block version that is an entry point inserted into an iseq
-uint8_t* gen_entry_point(const rb_iseq_t *iseq, uint32_t insn_idx)
+uint8_t* gen_entry_point(const rb_iseq_t *iseq, uint32_t insn_idx, rb_execution_context_t *ec)
 {
     // The entry context makes no assumptions about types
     blockid_t blockid = { iseq, insn_idx };
@@ -345,7 +345,7 @@ uint8_t* gen_entry_point(const rb_iseq_t *iseq, uint32_t insn_idx)
     uint8_t* code_ptr = ujit_entry_prologue();
 
     // Try to generate code for the entry block
-    block_t* block = gen_block_version(blockid, &DEFAULT_CTX);
+    block_t* block = gen_block_version(blockid, &DEFAULT_CTX, ec);
 
     // If we couldn't generate any code
     if (block->end_idx == insn_idx)
@@ -358,7 +358,7 @@ uint8_t* gen_entry_point(const rb_iseq_t *iseq, uint32_t insn_idx)
 
 // Called by the generated code when a branch stub is executed
 // Triggers compilation of branches and code patching
-uint8_t* branch_stub_hit(uint32_t branch_idx, uint32_t target_idx)
+uint8_t* branch_stub_hit(uint32_t branch_idx, uint32_t target_idx, rb_execution_context_t* ec)
 {
     uint8_t* dst_addr;
 
@@ -372,6 +372,10 @@ uint8_t* branch_stub_hit(uint32_t branch_idx, uint32_t target_idx)
 
     //fprintf(stderr, "\nstub hit, branch idx: %d, target idx: %d\n", branch_idx, target_idx);
     //fprintf(stderr, "blockid.iseq=%p, blockid.idx=%d\n", target.iseq, target.idx);
+
+    // Update the PC in the current CFP, because it
+    // may be out of sync in JITted code
+    ec->cfp->pc = iseq_pc_at_idx(target.iseq, target.idx);
 
     // If either of the target blocks will be placed next
     if (cb->write_pos == branch->end_pos)
@@ -401,7 +405,7 @@ uint8_t* branch_stub_hit(uint32_t branch_idx, uint32_t target_idx)
     // If this block hasn't yet been compiled
     if (!p_block)
     {
-        p_block = gen_block_version(target, target_ctx);
+        p_block = gen_block_version(target, target_ctx, ec);
     }
 
     // Add this branch to the list of incoming branches for the target
@@ -457,8 +461,10 @@ uint8_t* get_branch_target(
     push(ocb, REG_SP);
     push(ocb, REG_SP);
 
-    mov(ocb, RDI, imm_opnd(branch_idx));
-    mov(ocb, RSI, imm_opnd(target_idx));
+    // Call branch_stub_hit(branch_idx, target_idx, ec)
+    mov(ocb, C_ARG_REGS[2], REG_EC);
+    mov(ocb, C_ARG_REGS[1], imm_opnd(target_idx));
+    mov(ocb, C_ARG_REGS[0], imm_opnd(branch_idx));
     call_ptr(ocb, REG0, (void *)&branch_stub_hit);
 
     // Restore the ujit registers
@@ -598,6 +604,47 @@ void gen_direct_jump(
     branch_entries[branch_idx] = branch_entry;
 }
 
+// Create a stub to force the code up to this point to be executed
+void defer_compilation(
+    block_t* block,
+    ctx_t* cur_ctx,
+    uint32_t insn_idx
+)
+{
+
+
+
+
+
+
+
+
+
+
+
+
+    /*
+    RUBY_ASSERT(num_branches < MAX_BRANCHES);
+    uint32_t branch_idx = num_branches++;
+
+    // Register this branch entry
+    branch_t branch_entry = {
+        start_pos,
+        end_pos,
+        *ctx,
+        { target0, BLOCKID_NULL },
+        { *ctx, *ctx },
+        { dst_addr0, NULL },
+        gen_jump_branch,
+        branch_shape
+    };
+
+    branch_entries[branch_idx] = branch_entry;
+    */
+
+
+}
+
 // Remove all references to a block then free it.
 void
 ujit_free_block(block_t *block)
@@ -687,7 +734,7 @@ invalidate_block_version(block_t* block)
     uint32_t idx = block->blockid.idx;
     // FIXME: the following says "if", but it's unconditional.
     // If the block is an entry point, it needs to be unmapped from its iseq
-    VALUE* entry_pc = &iseq->body->iseq_encoded[idx];
+    VALUE* entry_pc = iseq_pc_at_idx(iseq, idx);
     int entry_opcode = opcode_at_pc(iseq, entry_pc);
 
     // TODO: unmap_addr2insn in ujit_iface.c? Maybe we can write a function to encompass this logic?
