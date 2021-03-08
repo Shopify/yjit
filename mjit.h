@@ -17,7 +17,7 @@
 #include "debug_counter.h"
 #include "ruby.h"
 #include "vm_core.h"
-#include "ujit.h"
+#include "yjit.h"
 
 // Special address values of a function generated from the
 // corresponding iseq by MJIT:
@@ -147,15 +147,15 @@ mjit_exec(rb_execution_context_t *ec)
     const rb_iseq_t *iseq;
     struct rb_iseq_constant_body *body;
 
-    if (mjit_call_p || rb_ujit_enabled_p()) {
+    if (mjit_call_p || rb_yjit_enabled_p()) {
         iseq = ec->cfp->iseq;
         body = iseq->body;
         body->total_calls++;
     }
 
 #ifndef MJIT_HEADER
-    if (rb_ujit_enabled_p() && !mjit_call_p && body->total_calls == rb_ujit_call_threshold())  {
-        rb_ujit_compile_iseq(iseq, ec);
+    if (rb_yjit_enabled_p() && !mjit_call_p && body->total_calls == rb_yjit_call_threshold())  {
+        rb_yjit_compile_iseq(iseq, ec);
         return Qundef;
     }
 #endif
