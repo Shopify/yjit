@@ -6,20 +6,9 @@
 #ifndef YJIT_IFACE_H
 #define YJIT_IFACE_H 1
 
-#include "stddef.h"
-#include "stdint.h"
-#include "stdbool.h"
-#include "internal.h"
-#include "ruby/internal/attr/nodiscard.h"
+#include "ruby/ruby.h"
 #include "vm_core.h"
-#include "vm_callinfo.h"
-#include "builtin.h"
 #include "yjit_core.h"
-
-#ifndef rb_callcache
-struct rb_callcache;
-#define rb_callcache rb_callcache
-#endif
 
 #define YJIT_DECLARE_COUNTERS(...) struct rb_yjit_runtime_counters { \
     int64_t __VA_ARGS__; \
@@ -82,6 +71,7 @@ int opcode_at_pc(const rb_iseq_t *iseq, const VALUE *pc);
 void check_cfunc_dispatch(VALUE receiver, struct rb_call_data *cd, void *callee, rb_callable_method_entry_t *compile_time_cme);
 bool cfunc_needs_frame(const rb_method_cfunc_t *cfunc);
 
+RBIMPL_ATTR_NODISCARD() bool assume_bop_not_redefined(block_t *block, int redefined_flag, enum ruby_basic_operators bop);
 void assume_method_lookup_stable(const struct rb_callcache *cc, const rb_callable_method_entry_t *cme, block_t* block);
 RBIMPL_ATTR_NODISCARD() bool assume_single_ractor_mode(block_t *block);
 RBIMPL_ATTR_NODISCARD() bool assume_stable_global_constant_state(block_t *block);

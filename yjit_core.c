@@ -1,9 +1,8 @@
-#include "vm_core.h"
-#include "vm_callinfo.h"
-#include "builtin.h"
-#include "insns.inc"
-#include "insns_info.inc"
+#include "ruby/ruby.h"
+#include "internal.h"
 #include "vm_sync.h"
+#include "builtin.h"
+
 #include "yjit_asm.h"
 #include "yjit_utils.h"
 #include "yjit_iface.h"
