@@ -17,12 +17,14 @@ module TestIRB
       Dir.chdir(@tmpdir)
       @home_backup = ENV["HOME"]
       ENV["HOME"] = @tmpdir
+      @xdg_config_home_backup = ENV.delete("XDG_CONFIG_HOME")
       @default_encoding = [Encoding.default_external, Encoding.default_internal]
       @stdio_encodings = [STDIN, STDOUT, STDERR].map {|io| [io.external_encoding, io.internal_encoding] }
       IRB.instance_variable_get(:@CONF).clear
     end
 
     def teardown
+      ENV["XDG_CONFIG_HOME"] = @xdg_config_home_backup
       ENV["HOME"] = @home_backup
       Dir.chdir(@pwd)
       FileUtils.rm_rf(@tmpdir)
@@ -371,6 +373,42 @@ module TestIRB
           /   => nil\n/,
           /=> "bug17564"\n/,
         ], out)
+    end
+
+    def test_ls
+      IRB.init_config(nil)
+      workspace = IRB::WorkSpace.new(self)
+      IRB.conf[:VERBOSE] = false
+      irb = IRB::Irb.new(workspace)
+      IRB.conf[:MAIN_CONTEXT] = irb.context
+      input = TestInputMethod.new([
+        "ls Object.new.tap { |o| o.instance_variable_set(:@a, 1) }\n",
+      ])
+      irb = IRB::Irb.new(IRB::WorkSpace.new(Object.new), input)
+      irb.context.return_format = "=> %s\n"
+      out, err = capture_output do
+        irb.eval_input
+      end
+      assert_empty err
+      assert_match(/^instance variables:\s+@a\n/m, out)
+    end
+
+    def test_whereami
+      IRB.init_config(nil)
+      workspace = IRB::WorkSpace.new(self)
+      IRB.conf[:VERBOSE] = false
+      irb = IRB::Irb.new(workspace)
+      IRB.conf[:MAIN_CONTEXT] = irb.context
+      input = TestInputMethod.new([
+        "whereami\n",
+      ])
+      irb = IRB::Irb.new(IRB::WorkSpace.new(Object.new), input)
+      irb.context.return_format = "=> %s\n"
+      out, err = capture_output do
+        irb.eval_input
+      end
+      assert_empty err
+      assert_match(/^From: .+ @ line \d+ :\n/, out)
     end
   end
 end

@@ -257,29 +257,16 @@ def lldb_inspect(debugger, target, result, val):
     else:
         tRBasic = target.FindFirstType("struct RBasic").GetPointerType()
         tRValue = target.FindFirstType("struct RVALUE")
-        tUintPtr = target.FindFirstType("uintptr_t") # bits_t
 
         val = val.Cast(tRBasic)
         flags = val.GetValueForExpressionPath("->flags").GetValueAsUnsigned()
         flaginfo = ""
 
-        num_in_page = (val.GetValueAsUnsigned() & HEAP_PAGE_ALIGN_MASK) // tRValue.GetByteSize();
-        bits_bitlength = tUintPtr.GetByteSize() * 8
-        bitmap_index = num_in_page // bits_bitlength
-        bitmap_offset = num_in_page & (bits_bitlength - 1)
-        bitmap_bit = 1 << bitmap_offset
-
         page = get_page(lldb, target, val)
         page_type = target.FindFirstType("struct heap_page").GetPointerType()
         page.Cast(page_type)
 
-        print("bits [%s%s%s%s%s]" % (
-            check_bits(page, "uncollectible_bits", bitmap_index, bitmap_bit, "L"),
-            check_bits(page, "mark_bits", bitmap_index, bitmap_bit, "M"),
-            check_bits(page, "pinned_bits", bitmap_index, bitmap_bit, "P"),
-            check_bits(page, "marking_bits", bitmap_index, bitmap_bit, "R"),
-            check_bits(page, "wb_unprotected_bits", bitmap_index, bitmap_bit, "U"),
-            ), file=result)
+        dump_bits(target, result, page, val.GetValueAsUnsigned())
 
         if (flags & RUBY_FL_PROMOTED) == RUBY_FL_PROMOTED:
             flaginfo += "[PROMOTED] "
@@ -524,6 +511,74 @@ def rb_backtrace(debugger, command, result, internal_dict):
 
     bt.print_bt(val)
 
+def dump_bits(target, result, page, object_address, end = "\n"):
+    tRValue = target.FindFirstType("struct RVALUE")
+    tUintPtr = target.FindFirstType("uintptr_t") # bits_t
+
+    num_in_page = (object_address & HEAP_PAGE_ALIGN_MASK) // tRValue.GetByteSize();
+    bits_bitlength = tUintPtr.GetByteSize() * 8
+    bitmap_index = num_in_page // bits_bitlength
+    bitmap_offset = num_in_page & (bits_bitlength - 1)
+    bitmap_bit = 1 << bitmap_offset
+
+    print("bits: [%s%s%s%s%s]" % (
+        check_bits(page, "uncollectible_bits", bitmap_index, bitmap_bit, "L"),
+        check_bits(page, "mark_bits", bitmap_index, bitmap_bit, "M"),
+        check_bits(page, "pinned_bits", bitmap_index, bitmap_bit, "P"),
+        check_bits(page, "marking_bits", bitmap_index, bitmap_bit, "R"),
+        check_bits(page, "wb_unprotected_bits", bitmap_index, bitmap_bit, "U"),
+        ), end=end, file=result)
+
+def dump_page(debugger, command, result, internal_dict):
+    if not ('RUBY_Qfalse' in globals()):
+        lldb_init(debugger)
+
+    target = debugger.GetSelectedTarget()
+    process = target.GetProcess()
+    thread = process.GetSelectedThread()
+    frame = thread.GetSelectedFrame()
+
+    tHeapPageP = target.FindFirstType("struct heap_page").GetPointerType()
+    page = frame.EvaluateExpression(command)
+    page = page.Cast(tHeapPageP)
+
+    tRBasic = target.FindFirstType("struct RBasic")
+    tRValue = target.FindFirstType("struct RVALUE")
+
+    obj_address = page.GetChildMemberWithName('start').GetValueAsUnsigned();
+    num_slots = page.GetChildMemberWithName('total_slots').unsigned
+
+    ruby_type_map = ruby_types(debugger)
+
+    for j in range(0, num_slots):
+        offset = obj_address + (j * tRValue.GetByteSize())
+        obj_addr = lldb.SBAddress(offset, target)
+        p = target.CreateValueFromAddress("object", obj_addr, tRBasic)
+        dump_bits(target, result, page, offset, end = " ")
+        flags = p.GetChildMemberWithName('flags').GetValueAsUnsigned()
+        print("%s [%3d]: Addr: %0#x (flags: %0#x)" % (rb_type(flags, ruby_type_map), j, offset, flags), file=result)
+
+def rb_type(flags, ruby_types):
+    flType = flags & RUBY_T_MASK
+    return "%-10s" % (ruby_types.get(flType, ("%0#x" % flType)))
+
+def ruby_types(debugger):
+    target = debugger.GetSelectedTarget()
+
+    types = {}
+    for enum in target.FindFirstGlobalVariable('ruby_dummy_gdb_enums'):
+        enum = enum.GetType()
+        members = enum.GetEnumMembers()
+        for i in range(0, members.GetSize()):
+            member = members.GetTypeEnumMemberAtIndex(i)
+            name = member.GetName()
+            value = member.GetValueAsUnsigned()
+
+            if name.startswith('RUBY_T_'):
+                types[value] = name.replace('RUBY_', '')
+
+    return types
+
 def __lldb_init_module(debugger, internal_dict):
     debugger.HandleCommand("command script add -f lldb_cruby.lldb_rp rp")
     debugger.HandleCommand("command script add -f lldb_cruby.count_objects rb_count_objects")
@@ -532,5 +587,7 @@ def __lldb_init_module(debugger, internal_dict):
     debugger.HandleCommand("command script add -f lldb_cruby.heap_page heap_page")
     debugger.HandleCommand("command script add -f lldb_cruby.heap_page_body heap_page_body")
     debugger.HandleCommand("command script add -f lldb_cruby.rb_backtrace rbbt")
+    debugger.HandleCommand("command script add -f lldb_cruby.dump_page dump_page")
+
     lldb_init(debugger)
     print("lldb scripts for ruby has been installed.")

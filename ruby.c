@@ -309,7 +309,7 @@ usage(const char *name, int help, int highlight, int columns)
 	M("--copyright",                            "", "print the copyright"),
 	M("--dump={insns|parsetree|...}[,...]",     "",
           "dump debug information. see below for available dump list"),
-	M("--enable={gems|rubyopt|...}[,...]", ", --disable={gems|rubyopt|...}[,...]",
+	M("--enable={jit|rubyopt|...}[,...]", ", --disable={jit|rubyopt|...}[,...]",
 	  "enable or disable features. see below for available features"),
 	M("--external-encoding=encoding",           ", --internal-encoding=encoding",
 	  "specify the default external or internal character encoding"),
@@ -325,7 +325,7 @@ usage(const char *name, int help, int highlight, int columns)
 	M("parsetree_with_comment", "", "AST with comments"),
     };
     static const struct message features[] = {
-	M("gems",    "",        "rubygems (default: "DEFAULT_RUBYGEMS_ENABLED")"),
+	M("gems",    "",        "rubygems (only for debugging, default: "DEFAULT_RUBYGEMS_ENABLED")"),
 	M("did_you_mean", "",   "did_you_mean (default: "DEFAULT_RUBYGEMS_ENABLED")"),
 	M("rubyopt", "",        "RUBYOPT environment variable (default: enabled)"),
 	M("frozen-string-literal", "", "freeze all string literals (default: disabled)"),
@@ -1835,7 +1835,7 @@ process_options(int argc, char **argv, ruby_cmdline_options_t *opt)
 		opt->script = "-";
 	    }
 	    else if (opt->do_search) {
-		char *path = getenv("RUBYPATH");
+		const char *path = getenv("RUBYPATH");
 
 		opt->script = 0;
 		if (path) {
@@ -2586,12 +2586,6 @@ ruby_set_argv(int argc, char **argv)
     int i;
     VALUE av = rb_argv;
 
-#if defined(USE_DLN_A_OUT)
-    if (origarg.argc > 0 && origarg.argv)
-	dln_argv0 = origarg.argv[0];
-    else if (argc > 0 && argv)
-	dln_argv0 = argv[0];
-#endif
     rb_ary_clear(av);
     for (i = 0; i < argc; i++) {
 	VALUE arg = external_str_new_cstr(argv[i]);
@@ -2670,9 +2664,6 @@ ruby_sysinit(int *argc, char ***argv)
     if (*argc >= 0 && *argv) {
 	origarg.argc = *argc;
 	origarg.argv = *argv;
-#if defined(USE_DLN_A_OUT)
-	dln_argv0 = origarg.argv[0];
-#endif
     }
     fill_standard_fds();
 }

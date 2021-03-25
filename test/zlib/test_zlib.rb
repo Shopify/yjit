@@ -3,6 +3,7 @@
 require 'test/unit'
 require 'stringio'
 require 'tempfile'
+require 'tmpdir'
 
 begin
   require 'zlib'
@@ -721,6 +722,34 @@ if defined? Zlib
         assert_raise(NoMethodError) { gz.path }
         gz.close
       }
+    end
+
+    if defined? File::TMPFILE
+      def test_path_tmpfile
+        sio = StringIO.new("".dup, 'w')
+        gz = Zlib::GzipWriter.new(sio)
+        gz.write "hi"
+        gz.close
+
+        File.open(Dir.mktmpdir, File::RDWR | File::TMPFILE) do |io|
+          io.write sio.string
+          io.rewind
+
+          gz0 = Zlib::GzipWriter.new(io)
+          assert_raise(NoMethodError) { gz0.path }
+
+          gz1 = Zlib::GzipReader.new(io)
+          assert_raise(NoMethodError) { gz1.path }
+          gz0.close
+          gz1.close
+        end
+      rescue Errno::EINVAL
+        skip 'O_TMPFILE not supported (EINVAL)'
+      rescue Errno::EISDIR
+        skip 'O_TMPFILE not supported (EISDIR)'
+      rescue Errno::EOPNOTSUPP
+        skip 'O_TMPFILE not supported (EOPNOTSUPP)'
+      end
     end
   end
 
