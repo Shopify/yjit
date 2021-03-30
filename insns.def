@@ -662,12 +662,15 @@ adjuststack
 /* defined? */
 DEFINE_INSN
 defined
-(rb_num_t op_type, VALUE obj, VALUE needstr)
+(rb_num_t op_type, VALUE obj, VALUE pushval)
 (VALUE v)
 (VALUE val)
 // attr bool leaf = leafness_of_defined(op_type);
 {
-    val = vm_defined(ec, GET_CFP(), op_type, obj, needstr, v);
+    val = Qnil;
+    if (vm_defined(ec, GET_CFP(), op_type, obj, v)) {
+      val = pushval;
+    }
 }
 
 /* check `target' matches `pattern'.

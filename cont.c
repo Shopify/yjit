@@ -646,6 +646,8 @@ fiber_pool_stack_free(struct fiber_pool_stack * stack)
 #if VM_CHECK_MODE > 0 && defined(MADV_DONTNEED)
     // This immediately discards the pages and the memory is reset to zero.
     madvise(base, size, MADV_DONTNEED);
+#elif defined(POSIX_MADV_DONTNEED)
+    posix_madvise(base, size, POSIX_MADV_DONTNEED);
 #elif defined(MADV_FREE_REUSABLE)
     madvise(base, size, MADV_FREE_REUSABLE);
 #elif defined(MADV_FREE)
@@ -1904,7 +1906,7 @@ rb_fiber_new(rb_block_call_func_t func, VALUE obj)
 }
 
 static VALUE
-rb_f_fiber_kw(int argc, VALUE* argv, int kw_splat)
+rb_fiber_s_schedule_kw(int argc, VALUE* argv, int kw_splat)
 {
     rb_thread_t * th = GET_THREAD();
     VALUE scheduler = th->scheduler;
@@ -1962,9 +1964,9 @@ rb_f_fiber_kw(int argc, VALUE* argv, int kw_splat)
  *
  */
 static VALUE
-rb_f_fiber(int argc, VALUE *argv, VALUE obj)
+rb_fiber_s_schedule(int argc, VALUE *argv, VALUE obj)
 {
-    return rb_f_fiber_kw(argc, argv, rb_keyword_given_p());
+    return rb_fiber_s_schedule_kw(argc, argv, rb_keyword_given_p());
 }
 
 /*
@@ -1978,7 +1980,7 @@ rb_f_fiber(int argc, VALUE *argv, VALUE obj)
  *
  */
 static VALUE
-rb_fiber_scheduler(VALUE klass)
+rb_fiber_s_scheduler(VALUE klass)
 {
     return rb_fiber_scheduler_get();
 }
@@ -2344,7 +2346,7 @@ rb_fiber_blocking_p(VALUE fiber)
  *
  */
 static VALUE
-rb_f_fiber_blocking_p(VALUE klass)
+rb_fiber_s_blocking_p(VALUE klass)
 {
     rb_thread_t *thread = GET_THREAD();
     unsigned blocking = thread->blocking;
@@ -2445,8 +2447,7 @@ rb_fiber_reset_root_local_storage(rb_thread_t *th)
  *
  *  Returns true if the fiber can still be resumed (or transferred
  *  to). After finishing execution of the fiber block this method will
- *  always return +false+. You need to <code>require 'fiber'</code>
- *  before using this method.
+ *  always return +false+.
  */
 VALUE
 rb_fiber_alive_p(VALUE fiber_value)
@@ -2598,8 +2599,7 @@ rb_fiber_backtrace_locations(int argc, VALUE *argv, VALUE fiber)
  *  Transfer control to another fiber, resuming it from where it last
  *  stopped or starting it if it was not resumed before. The calling
  *  fiber will be suspended much like in a call to
- *  Fiber.yield. You need to <code>require 'fiber'</code>
- *  before using this method.
+ *  Fiber.yield.
  *
  *  The fiber which receives the transfer call treats it much like
  *  a resume call. Arguments passed to transfer are treated like those
@@ -2630,8 +2630,6 @@ rb_fiber_backtrace_locations(int argc, VALUE *argv, VALUE fiber)
  *
  *
  *  Example:
- *
- *     require 'fiber'
  *
  *     manager = nil # For local var to be visible inside worker block
  *
@@ -2715,8 +2713,7 @@ rb_fiber_s_yield(int argc, VALUE *argv, VALUE klass)
  *  call-seq:
  *     Fiber.current -> fiber
  *
- *  Returns the current fiber. You need to <code>require 'fiber'</code>
- *  before using this method. If you are not running in the context of
+ *  Returns the current fiber. If you are not running in the context of
  *  a fiber this method will return the root fiber.
  */
 static VALUE
@@ -3053,7 +3050,7 @@ Init_Cont(void)
     fiber_initialize_keywords[0] = rb_intern_const("blocking");
     fiber_initialize_keywords[1] = rb_intern_const("pool");
 
-    char * fiber_shared_fiber_pool_free_stacks = getenv("RUBY_SHARED_FIBER_POOL_FREE_STACKS");
+    const char *fiber_shared_fiber_pool_free_stacks = getenv("RUBY_SHARED_FIBER_POOL_FREE_STACKS");
     if (fiber_shared_fiber_pool_free_stacks) {
         shared_fiber_pool.free_stacks = atoi(fiber_shared_fiber_pool_free_stacks);
     }
@@ -3074,12 +3071,11 @@ Init_Cont(void)
     rb_define_method(rb_cFiber, "transfer", rb_fiber_m_transfer, -1);
     rb_define_method(rb_cFiber, "alive?", rb_fiber_alive_p, 0);
 
-    rb_define_singleton_method(rb_cFiber, "blocking?", rb_f_fiber_blocking_p, 0);
-    rb_define_singleton_method(rb_cFiber, "scheduler", rb_fiber_scheduler, 0);
+    rb_define_singleton_method(rb_cFiber, "blocking?", rb_fiber_s_blocking_p, 0);
+    rb_define_singleton_method(rb_cFiber, "scheduler", rb_fiber_s_scheduler, 0);
     rb_define_singleton_method(rb_cFiber, "set_scheduler", rb_fiber_set_scheduler, 1);
 
-    rb_define_singleton_method(rb_cFiber, "schedule", rb_f_fiber, -1);
-    //rb_define_global_function("Fiber", rb_f_fiber, -1);
+    rb_define_singleton_method(rb_cFiber, "schedule", rb_fiber_s_schedule, -1);
 
 #if 0 /* for RDoc */
     rb_cFiberScheduler = rb_define_class_under(rb_cFiber, "SchedulerInterface", rb_cObject);

@@ -805,7 +805,7 @@ ary_inject_op(VALUE ary, VALUE init, VALUE op)
                 if (FIXNUM_P(e)) {
                     n += FIX2LONG(e); /* should not overflow long type */
                     if (!FIXABLE(n)) {
-                        v = rb_big_plus(ULONG2NUM(n), v);
+                        v = rb_big_plus(LONG2NUM(n), v);
                         n = 0;
                     }
                 }
@@ -1008,11 +1008,12 @@ enum_group_by(VALUE obj)
     return enum_hashify(obj, 0, 0, group_by_i);
 }
 
-static void
-tally_up(VALUE hash, VALUE group)
+static int
+tally_up(st_data_t *group, st_data_t *value, st_data_t arg, int existing)
 {
-    VALUE tally = rb_hash_aref(hash, group);
-    if (NIL_P(tally)) {
+    VALUE tally = (VALUE)*value;
+    VALUE hash = (VALUE)arg;
+    if (!existing) {
         tally = INT2FIX(1);
     }
     else if (FIXNUM_P(tally) && tally < INT2FIX(FIXNUM_MAX)) {
@@ -1020,15 +1021,25 @@ tally_up(VALUE hash, VALUE group)
     }
     else {
         tally = rb_big_plus(tally, INT2FIX(1));
+        RB_OBJ_WRITTEN(hash, Qundef, tally);
     }
-    rb_hash_aset(hash, group, tally);
+    *value = (st_data_t)tally;
+    if (!SPECIAL_CONST_P(*group)) RB_OBJ_WRITTEN(hash, Qundef, *group);
+    return ST_CONTINUE;
+}
+
+static VALUE
+rb_enum_tally_up(VALUE hash, VALUE group)
+{
+    rb_hash_stlike_update(hash, group, tally_up, (st_data_t)hash);
+    return hash;
 }
 
 static VALUE
 tally_i(RB_BLOCK_CALL_FUNC_ARGLIST(i, hash))
 {
     ENUM_WANT_SVALUE();
-    tally_up(hash, i);
+    rb_enum_tally_up(hash, i);
     return Qnil;
 }
 

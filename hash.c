@@ -1665,11 +1665,8 @@ func##_insert(st_data_t *key, st_data_t *val, st_data_t arg, int existing)   \
 
 struct update_arg {
     st_data_t arg;
+    st_update_callback_func *func;
     VALUE hash;
-    VALUE new_key;
-    VALUE old_key;
-    VALUE new_value;
-    VALUE old_value;
 };
 
 typedef int (*tbl_update_func)(st_data_t *, st_data_t *, st_data_t, int);
@@ -1691,25 +1688,42 @@ rb_hash_stlike_update(VALUE hash, st_data_t key, st_update_callback_func *func, 
 }
 
 static int
+tbl_update_modify(st_data_t *key, st_data_t *val, st_data_t arg, int existing)
+{
+    struct update_arg *p = (struct update_arg *)arg;
+    st_data_t old_key = *key;
+    st_data_t old_value = *val;
+    VALUE hash = p->hash;
+    int ret = (p->func)(key, val, arg, existing);
+    switch (ret) {
+      default:
+        break;
+      case ST_CONTINUE:
+        if (!existing || *key != old_key || *val != old_value)
+            rb_hash_modify(hash);
+        /* write barrier */
+        RB_OBJ_WRITTEN(hash, Qundef, *key);
+        RB_OBJ_WRITTEN(hash, Qundef, *val);
+        break;
+      case ST_DELETE:
+        if (existing)
+            rb_hash_modify(hash);
+        break;
+    }
+
+    return ret;
+}
+
+static int
 tbl_update(VALUE hash, VALUE key, tbl_update_func func, st_data_t optional_arg)
 {
-    struct update_arg arg;
-    int result;
+    struct update_arg arg = {
+        .arg = optional_arg,
+        .func = func,
+        .hash = hash,
+    };
 
-    arg.arg = optional_arg;
-    arg.hash = hash;
-    arg.new_key = 0;
-    arg.old_key = Qundef;
-    arg.new_value = 0;
-    arg.old_value = Qundef;
-
-    result = rb_hash_stlike_update(hash, key, func, (st_data_t)&arg);
-
-    /* write barrier */
-    if (arg.new_key)   RB_OBJ_WRITTEN(hash, arg.old_key, arg.new_key);
-    if (arg.new_value) RB_OBJ_WRITTEN(hash, arg.old_value, arg.new_value);
-
-    return result;
+    return rb_hash_stlike_update(hash, key, tbl_update_modify, (st_data_t)&arg);
 }
 
 #define UPDATE_CALLBACK(iter_lev, func) ((iter_lev) > 0 ? func##_noinsert : func##_insert)
@@ -2476,6 +2490,7 @@ static int
 delete_if_i(VALUE key, VALUE value, VALUE hash)
 {
     if (RTEST(rb_yield_values(2, key, value))) {
+	rb_hash_modify(hash);
 	return ST_DELETE;
     }
     return ST_CONTINUE;
@@ -2547,15 +2562,6 @@ rb_hash_reject_bang(VALUE hash)
     return hash;
 }
 
-static int
-reject_i(VALUE key, VALUE value, VALUE result)
-{
-    if (!RTEST(rb_yield_values(2, key, value))) {
-	rb_hash_aset(result, key, value);
-    }
-    return ST_CONTINUE;
-}
-
 /*
  *  call-seq:
  *    hash.reject {|key, value| ... } -> new_hash
@@ -2586,9 +2592,9 @@ rb_hash_reject(VALUE hash)
 	    rb_warn("extra states are no longer copied: %+"PRIsVALUE, hash);
 	}
     }
-    result = rb_hash_new();
+    result = hash_copy(hash_alloc(rb_cHash), hash);
     if (!RHASH_EMPTY_P(hash)) {
-	rb_hash_foreach(hash, reject_i, result);
+	rb_hash_foreach(result, delete_if_i, result);
     }
     return result;
 }
@@ -2711,10 +2717,11 @@ rb_hash_fetch_values(int argc, VALUE *argv, VALUE hash)
 }
 
 static int
-select_i(VALUE key, VALUE value, VALUE result)
+keep_if_i(VALUE key, VALUE value, VALUE hash)
 {
-    if (RTEST(rb_yield_values(2, key, value))) {
-	rb_hash_aset(result, key, value);
+    if (!RTEST(rb_yield_values(2, key, value))) {
+	rb_hash_modify(hash);
+	return ST_DELETE;
     }
     return ST_CONTINUE;
 }
@@ -2742,20 +2749,11 @@ rb_hash_select(VALUE hash)
     VALUE result;
 
     RETURN_SIZED_ENUMERATOR(hash, 0, 0, hash_enum_size);
-    result = rb_hash_new();
+    result = hash_copy(hash_alloc(rb_cHash), hash);
     if (!RHASH_EMPTY_P(hash)) {
-	rb_hash_foreach(hash, select_i, result);
+	rb_hash_foreach(result, keep_if_i, result);
     }
     return result;
-}
-
-static int
-keep_if_i(VALUE key, VALUE value, VALUE hash)
-{
-    if (!RTEST(rb_yield_values(2, key, value))) {
-	return ST_DELETE;
-    }
-    return ST_CONTINUE;
 }
 
 /*
@@ -2853,14 +2851,6 @@ rb_hash_clear(VALUE hash)
 static int
 hash_aset(st_data_t *key, st_data_t *val, struct update_arg *arg, int existing)
 {
-    if (existing) {
-	arg->new_value = arg->arg;
-	arg->old_value = *val;
-    }
-    else {
-	arg->new_key = *key;
-	arg->new_value = arg->arg;
-    }
     *val = arg->arg;
     return ST_CONTINUE;
 }
@@ -2976,7 +2966,7 @@ rb_hash_replace(VALUE hash, VALUE hash2)
             RHASH_TBL_RAW(hash)->type = RHASH_ST_TABLE(hash2)->type;
         }
     }
-    rb_hash_foreach(hash2, rb_hash_rehash_i, (VALUE)hash);
+    hash_copy(hash, hash2);
 
     rb_gc_writebarrier_remember(hash);
 
@@ -3313,6 +3303,7 @@ transform_values_foreach_replace(st_data_t *key, st_data_t *value, st_data_t arg
 {
     VALUE new_value = rb_yield((VALUE)*value);
     VALUE hash = (VALUE)argp;
+    rb_hash_modify(hash);
     RB_OBJ_WRITE(hash, value, new_value);
     return ST_CONTINUE;
 }
@@ -3888,14 +3879,6 @@ rb_hash_invert(VALUE hash)
 static int
 rb_hash_update_callback(st_data_t *key, st_data_t *value, struct update_arg *arg, int existing)
 {
-    if (existing) {
-	arg->old_value = *value;
-	arg->new_value = arg->arg;
-    }
-    else {
-	arg->new_key = *key;
-	arg->new_value = arg->arg;
-    }
     *value = arg->arg;
     return ST_CONTINUE;
 }
@@ -3912,16 +3895,11 @@ rb_hash_update_i(VALUE key, VALUE value, VALUE hash)
 static int
 rb_hash_update_block_callback(st_data_t *key, st_data_t *value, struct update_arg *arg, int existing)
 {
-    VALUE newvalue = (VALUE)arg->arg;
+    st_data_t newvalue = arg->arg;
 
     if (existing) {
-	newvalue = rb_yield_values(3, (VALUE)*key, (VALUE)*value, newvalue);
-	arg->old_value = *value;
+        newvalue = (st_data_t)rb_yield_values(3, (VALUE)*key, (VALUE)*value, (VALUE)newvalue);
     }
-    else {
-	arg->new_key = *key;
-    }
-    arg->new_value = newvalue;
     *value = newvalue;
     return ST_CONTINUE;
 }
@@ -4018,12 +3996,7 @@ rb_hash_update_func_callback(st_data_t *key, st_data_t *value, struct update_arg
 
     if (existing) {
 	newvalue = (*uf_arg->func)((VALUE)*key, (VALUE)*value, newvalue);
-	arg->old_value = *value;
     }
-    else {
-	arg->new_key = *key;
-    }
-    arg->new_value = newvalue;
     *value = newvalue;
     return ST_CONTINUE;
 }
@@ -6717,8 +6690,8 @@ env_update(VALUE env, VALUE hash)
  *  ==== User-Defined \Hash Keys
  *
  *  To be useable as a \Hash key, objects must implement the methods <code>hash</code> and <code>eql?</code>.
- *  Note: this requirement does not apply if the \Hash uses #compare_by_id since comparison will then rely on
- *  the keys' object id instead of <code>hash</code> and <code>eql?</code>.
+ *  Note: this requirement does not apply if the \Hash uses #compare_by_identity since comparison will then
+ *  rely on the keys' object id instead of <code>hash</code> and <code>eql?</code>.
  *
  *  \Object defines basic implementation for <code>hash</code> and <code>eq?</code> that makes each object
  *  a distinct key. Typically, user-defined classes will want to override these methods to provide meaningful

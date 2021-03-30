@@ -71,6 +71,10 @@
 
 #include <sys/types.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #include "constant.h"
 #include "debug_counter.h"
 #include "eval_intern.h"
@@ -2624,6 +2628,7 @@ static void
 iv_index_tbl_free(struct st_table *tbl)
 {
     st_foreach(tbl, free_iv_index_tbl_free_i, 0);
+    st_free_table(tbl);
 }
 
 // alive: if false, target pointers can be freed already.
@@ -3211,53 +3216,67 @@ Init_gc_stress(void)
 
 typedef int each_obj_callback(void *, void *, size_t, void *);
 
-static void objspace_each_objects(rb_objspace_t *objspace, each_obj_callback *callback, void *data);
+static void objspace_each_objects(rb_objspace_t *objspace, each_obj_callback *callback, void *data, bool protected);
 static void objspace_reachable_objects_from_root(rb_objspace_t *, void (func)(const char *, VALUE, void *), void *);
 
-struct each_obj_args {
+struct each_obj_data {
     rb_objspace_t *objspace;
+    bool reenable_incremental;
+
     each_obj_callback *callback;
     void *data;
+
+    struct heap_page **pages;
+    size_t pages_count;
 };
 
-static void
-objspace_each_objects_without_setup(rb_objspace_t *objspace, each_obj_callback *callback, void *data)
-{
-    size_t i;
-    struct heap_page *page;
-    RVALUE *pstart = NULL, *pend;
-
-    i = 0;
-    while (i < heap_allocated_pages) {
-	while (0 < i && pstart < heap_pages_sorted[i-1]->start)              i--;
-	while (i < heap_allocated_pages && heap_pages_sorted[i]->start <= pstart) i++;
-	if (heap_allocated_pages <= i) break;
-
-	page = heap_pages_sorted[i];
-
-	pstart = page->start;
-	pend = pstart + page->total_slots;
-
-        if ((*callback)(pstart, pend, sizeof(RVALUE), data)) {
-	    break;
-	}
-    }
-}
-
 static VALUE
-objspace_each_objects_protected(VALUE arg)
+objspace_each_objects_ensure(VALUE arg)
 {
-    struct each_obj_args *args = (struct each_obj_args *)arg;
-    objspace_each_objects_without_setup(args->objspace, args->callback, args->data);
+    struct each_obj_data *data = (struct each_obj_data *)arg;
+    rb_objspace_t *objspace = data->objspace;
+
+    /* Reenable incremental GC */
+    if (data->reenable_incremental) {
+        objspace->flags.dont_incremental = FALSE;
+    }
+
+    /* Free pages buffer */
+    struct heap_page **pages = data->pages;
+    GC_ASSERT(pages);
+    free(pages);
+
     return Qnil;
 }
 
 static VALUE
-incremental_enable(VALUE _)
+objspace_each_objects_try(VALUE arg)
 {
-    rb_objspace_t *objspace = &rb_objspace;
+    struct each_obj_data *data = (struct each_obj_data *)arg;
+    rb_objspace_t *objspace = data->objspace;
+    struct heap_page **pages = data->pages;
+    size_t pages_count = data->pages_count;
 
-    objspace->flags.dont_incremental = FALSE;
+    struct heap_page *page = list_top(&heap_eden->pages, struct heap_page, page_node);
+    for (size_t i = 0; i < pages_count; i++) {
+        /* If we have reached the end of the linked list then there are no
+         * more pages, so break. */
+        if (page == NULL) break;
+
+        /* If this page does not match the one in the buffer, then move to
+         * the next page in the buffer. */
+        if (pages[i] != page) continue;
+
+        RVALUE *pstart = page->start;
+        RVALUE *pend = pstart + page->total_slots;
+
+        if ((*data->callback)(pstart, pend, sizeof(RVALUE), data->data)) {
+            break;
+        }
+
+        page = list_next(&heap_eden->pages, page, page_node);
+    }
+
     return Qnil;
 }
 
@@ -3300,30 +3319,58 @@ incremental_enable(VALUE _)
 void
 rb_objspace_each_objects(each_obj_callback *callback, void *data)
 {
-    objspace_each_objects(&rb_objspace, callback, data);
+    objspace_each_objects(&rb_objspace, callback, data, TRUE);
 }
 
 static void
-objspace_each_objects(rb_objspace_t *objspace, each_obj_callback *callback, void *data)
+objspace_each_objects(rb_objspace_t *objspace, each_obj_callback *callback, void *data, bool protected)
 {
-    int prev_dont_incremental = objspace->flags.dont_incremental;
+    /* Disable incremental GC */
+    bool reenable_incremental = FALSE;
+    if (protected) {
+        reenable_incremental = !objspace->flags.dont_incremental;
 
-    gc_rest(objspace);
-    objspace->flags.dont_incremental = TRUE;
+        gc_rest(objspace);
+        objspace->flags.dont_incremental = TRUE;
+    }
 
-    if (prev_dont_incremental) {
-        objspace_each_objects_without_setup(objspace, callback, data);
+    /* Create pages buffer */
+    size_t size = size_mul_or_raise(heap_allocated_pages, sizeof(struct heap_page *), rb_eRuntimeError);
+    struct heap_page **pages = malloc(size);
+    if (!pages) rb_memerror();
+
+    /* Set up pages buffer by iterating over all pages in the current eden
+     * heap. This will be a snapshot of the state of the heap before we
+     * call the callback over each page that exists in this buffer. Thus it
+     * is safe for the callback to allocate objects without possibly entering
+     * an infinte loop. */
+    struct heap_page *page;
+    size_t pages_count = 0;
+    list_for_each(&heap_eden->pages, page, page_node) {
+        pages[pages_count] = page;
+        pages_count++;
     }
-    else {
-        struct each_obj_args args = {objspace, callback, data};
-        rb_ensure(objspace_each_objects_protected, (VALUE)&args, incremental_enable, Qnil);
-    }
+    GC_ASSERT(pages_count <= heap_allocated_pages);
+
+    /* Run the callback */
+    struct each_obj_data each_obj_data = {
+        .objspace = objspace,
+        .reenable_incremental = reenable_incremental,
+
+        .callback = callback,
+        .data = data,
+
+        .pages = pages,
+        .pages_count = pages_count
+    };
+    rb_ensure(objspace_each_objects_try, (VALUE)&each_obj_data,
+              objspace_each_objects_ensure, (VALUE)&each_obj_data);
 }
 
 void
 rb_objspace_each_objects_without_setup(each_obj_callback *callback, void *data)
 {
-    objspace_each_objects_without_setup(&rb_objspace, callback, data);
+    objspace_each_objects(&rb_objspace, callback, data, FALSE);
 }
 
 struct os_each_struct {
@@ -5895,6 +5942,7 @@ mark_const_tbl(rb_objspace_t *objspace, struct rb_id_table *tbl)
 static void mark_stack_locations(rb_objspace_t *objspace, const rb_execution_context_t *ec,
 				 const VALUE *stack_start, const VALUE *stack_end);
 
+#ifndef __EMSCRIPTEN__
 static void
 mark_current_machine_context(rb_objspace_t *objspace, rb_execution_context_t *ec)
 {
@@ -5919,6 +5967,27 @@ mark_current_machine_context(rb_objspace_t *objspace, rb_execution_context_t *ec
 
     mark_stack_locations(objspace, ec, stack_start, stack_end);
 }
+#else
+
+static VALUE *rb_emscripten_stack_range_tmp[2];
+
+static void
+rb_emscripten_mark_locations(void *begin, void *end)
+{
+    rb_emscripten_stack_range_tmp[0] = begin;
+    rb_emscripten_stack_range_tmp[1] = end;
+}
+
+static void
+mark_current_machine_context(rb_objspace_t *objspace, rb_execution_context_t *ec)
+{
+    emscripten_scan_stack(rb_emscripten_mark_locations);
+    mark_stack_locations(objspace, ec, rb_emscripten_stack_range_tmp[0], rb_emscripten_stack_range_tmp[1]);
+
+    emscripten_scan_registers(rb_emscripten_mark_locations);
+    mark_stack_locations(objspace, ec, rb_emscripten_stack_range_tmp[0], rb_emscripten_stack_range_tmp[1]);
+}
+#endif
 
 void
 rb_gc_mark_machine_stack(const rb_execution_context_t *ec)
@@ -7106,7 +7175,7 @@ gc_verify_internal_consistency_(rb_objspace_t *objspace)
 
     /* check relations */
 
-    objspace_each_objects_without_setup(objspace, verify_internal_consistency_i, &data);
+    objspace_each_objects(objspace, verify_internal_consistency_i, &data, FALSE);
 
     if (data.err_count != 0) {
 #if RGENGC_CHECK_MODE >= 5
@@ -9410,8 +9479,6 @@ gc_update_references(rb_objspace_t * objspace, rb_heap_t *heap)
     gc_update_table_refs(objspace, finalizer_table);
 }
 
-static VALUE type_sym(size_t type);
-
 static VALUE
 gc_compact_stats(rb_execution_context_t *ec, VALUE self)
 {
@@ -9520,7 +9587,7 @@ gc_verify_compaction_references(rb_execution_context_t *ec, VALUE self, VALUE do
     gc_start_internal(ec, self, Qtrue, Qtrue, Qtrue, Qtrue);
 
     objspace_reachable_objects_from_root(objspace, root_obj_check_moved_i, NULL);
-    objspace_each_objects(objspace, heap_check_moved_i, NULL);
+    objspace_each_objects(objspace, heap_check_moved_i, NULL, TRUE);
 
     return gc_compact_stats(ec, self);
 }
@@ -10013,7 +10080,7 @@ gc_get_auto_compact(rb_execution_context_t *ec, VALUE _)
 static int
 get_envparam_size(const char *name, size_t *default_value, size_t lower_bound)
 {
-    char *ptr = getenv(name);
+    const char *ptr = getenv(name);
     ssize_t val;
 
     if (ptr != NULL && *ptr) {
@@ -10071,7 +10138,7 @@ get_envparam_size(const char *name, size_t *default_value, size_t lower_bound)
 static int
 get_envparam_double(const char *name, double *default_value, double lower_bound, double upper_bound, int accept_zero)
 {
-    char *ptr = getenv(name);
+    const char *ptr = getenv(name);
     double val;
 
     if (ptr != NULL && *ptr) {
