@@ -95,7 +95,11 @@ jit_peek_at_stack(jitstate_t* jit, ctx_t* ctx, int n)
 {
     RUBY_ASSERT(jit_at_current_insn(jit));
 
-    VALUE *sp = jit->ec->cfp->sp + ctx->sp_offset;
+    // Note: this does not account for ctx->sp_offset because
+    // this is only available when hitting a stub, and while
+    // hitting a stub, cfp->sp needs to be up to date in case
+    // codegen functions trigger GC. See :stub-sp-flush:.
+    VALUE *sp = jit->ec->cfp->sp;
 
     return *(sp - 1 - n);
 }
@@ -322,7 +326,8 @@ yjit_gen_block(ctx_t* ctx, block_t* block, rb_execution_context_t* ec)
         // Call the code generation function
         codegen_status_t status = gen_fn(&jit, ctx);
 
-        // For now, reset the chain depth after each instruction
+        // For now, reset the chain depth after each instruction as only the
+        // first instruction in the block can concern itself with the depth.
         ctx->chain_depth = 0;
 
         // If we can't compile this instruction
@@ -579,6 +584,26 @@ guard_self_is_object(codeblock_t *cb, x86opnd_t self_opnd, uint8_t *side_exit, c
     }
 }
 
+
+// Generate a stubbed unconditional jump to the next bytecode instruction.
+// Blocks that are part of a guard chain can use this to share the same successor.
+static void
+jit_jump_to_next_insn(jitstate_t *jit, const ctx_t *current_context)
+{
+    // Reset the depth since in current usages we only ever jump to to
+    // chain_depth > 0 from the same instruction.
+    ctx_t reset_depth = *current_context;
+    reset_depth.chain_depth = 0;
+
+    blockid_t jump_block = { jit->iseq, jit_next_insn_idx(jit) };
+
+    // Generate the jump instruction
+    gen_direct_jump(
+        &reset_depth,
+        jump_block
+    );
+}
+
 static void
 gen_jnz_to_target0(codeblock_t *cb, uint8_t *target0, uint8_t *target1, uint8_t shape)
 {
@@ -663,6 +688,7 @@ bool rb_iv_index_tbl_lookup(struct st_table *iv_index_tbl, ID id, struct rb_iv_i
 enum {
     GETIVAR_MAX_DEPTH = 10,       // up to 5 different classes, and embedded or not for each
     OPT_AREF_MAX_CHAIN_DEPTH = 2, // hashes and arrays
+    OSWB_MAX_DEPTH = 5,           // up to 5 different classes
 };
 
 static codegen_status_t
@@ -766,21 +792,8 @@ gen_getinstancevariable(jitstate_t* jit, ctx_t* ctx)
             mov(cb, out_opnd, REG0);
         }
 
-
         // Jump to next instruction. This allows guard chains to share the same successor.
-        {
-            ctx_t reset_depth = *ctx;
-            reset_depth.chain_depth = 0;
-
-            blockid_t jump_block = { jit->iseq, jit_next_insn_idx(jit) };
-
-            // Generate the jump instruction
-            gen_direct_jump(
-                &reset_depth,
-                jump_block
-            );
-        }
-
+        jit_jump_to_next_insn(jit, ctx);
         return YJIT_END_BLOCK;
     }
 
@@ -1000,18 +1013,7 @@ gen_opt_aref(jitstate_t *jit, ctx_t *ctx)
         }
 
         // Jump to next instruction. This allows guard chains to share the same successor.
-        {
-            ctx_t reset_depth = *ctx;
-            reset_depth.chain_depth = 0;
-
-            blockid_t jump_block = { jit->iseq, jit_next_insn_idx(jit) };
-
-            // Generate the jump instruction
-            gen_direct_jump(
-                &reset_depth,
-                jump_block
-            );
-        }
+        jit_jump_to_next_insn(jit, ctx);
         return YJIT_END_BLOCK;
     }
     else if (CLASS_OF(comptime_recv) == rb_cHash) {
@@ -1072,18 +1074,7 @@ gen_opt_aref(jitstate_t *jit, ctx_t *ctx)
         }
 
         // Jump to next instruction. This allows guard chains to share the same successor.
-        {
-            ctx_t reset_depth = *ctx;
-            reset_depth.chain_depth = 0;
-
-            blockid_t jump_block = { jit->iseq, jit_next_insn_idx(jit) };
-
-            // Generate the jump instruction
-            gen_direct_jump(
-                &reset_depth,
-                jump_block
-            );
-        }
+        jit_jump_to_next_insn(jit, ctx);
         return YJIT_END_BLOCK;
     }
 
@@ -1329,10 +1320,46 @@ gen_jump(jitstate_t* jit, ctx_t* ctx)
     return YJIT_END_BLOCK;
 }
 
-static void
-jit_protected_guard(jitstate_t *jit, codeblock_t *cb, const rb_callable_method_entry_t *cme, uint8_t *side_exit)
+// Guard that recv_opnd has the same class as known_klass. Recompile as contingency if possible, or take side exit a last resort.
+static bool
+jit_guard_known_klass(jitstate_t *jit, const ctx_t *recompile_context, VALUE known_klass, x86opnd_t recv_opnd, const int max_chain_depth, uint8_t *side_exit)
 {
-    // Callee is protected. Generate ancestry guard.
+    // Can't guard for for these classes because some of they are sometimes immediate (special const).
+    // Can remove this by adding appropriate dynamic checks.
+    if (known_klass == rb_cInteger ||
+        known_klass == rb_cSymbol ||
+        known_klass == rb_cFloat ||
+        known_klass == rb_cNilClass ||
+        known_klass == rb_cTrueClass ||
+        known_klass == rb_cFalseClass) {
+        return false;
+    }
+
+    // Check that the receiver is a heap object
+    {
+        test(cb, REG0, imm_opnd(RUBY_IMMEDIATE_MASK));
+        jnz_ptr(cb, side_exit);
+        cmp(cb, REG0, imm_opnd(Qfalse));
+        je_ptr(cb, side_exit);
+        cmp(cb, REG0, imm_opnd(Qnil));
+        je_ptr(cb, side_exit);
+    }
+
+    // Pointer to the klass field of the receiver &(recv->klass)
+    x86opnd_t klass_opnd = mem_opnd(64, REG0, offsetof(struct RBasic, klass));
+
+    // Bail if receiver class is different from compile-time call cache class
+    jit_mov_gc_ptr(jit, cb, REG1, known_klass);
+    cmp(cb, klass_opnd, REG1);
+    jit_chain_guard(JCC_JNE, jit, recompile_context, max_chain_depth, side_exit);
+    return true;
+}
+
+// Generate ancestry guard for protected callee.
+// Calls to protected callees only go through when self.is_a?(klass_that_defines_the_callee).
+static void
+jit_protected_callee_ancestry_guard(jitstate_t *jit, codeblock_t *cb, const rb_callable_method_entry_t *cme, uint8_t *side_exit)
+{
     // See vm_call_method().
     yjit_save_regs(cb);
     mov(cb, C_ARG_REGS[0], member_opnd(REG_CFP, rb_control_frame_t, self));
@@ -1346,20 +1373,18 @@ jit_protected_guard(jitstate_t *jit, codeblock_t *cb, const rb_callable_method_e
 }
 
 static codegen_status_t
-gen_oswb_cfunc(jitstate_t* jit, ctx_t* ctx, struct rb_call_data * cd, const rb_callable_method_entry_t *cme, int32_t argc)
+gen_oswb_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const rb_callable_method_entry_t *cme, int32_t argc)
 {
     const rb_method_cfunc_t *cfunc = UNALIGNED_MEMBER_PTR(cme->def, body.cfunc);
 
     // If the function expects a Ruby array of arguments
-    if (cfunc->argc < 0 && cfunc->argc != -1)
-    {
+    if (cfunc->argc < 0 && cfunc->argc != -1) {
         GEN_COUNTER_INC(cb, oswb_cfunc_ruby_array_varg);
         return YJIT_CANT_COMPILE;
     }
 
     // If the argument count doesn't match
-    if (cfunc->argc >= 0 && cfunc->argc != argc)
-    {
+    if (cfunc->argc >= 0 && cfunc->argc != argc) {
         GEN_COUNTER_INC(cb, oswb_cfunc_argc_mismatch);
         return YJIT_CANT_COMPILE;
     }
@@ -1370,6 +1395,15 @@ gen_oswb_cfunc(jitstate_t* jit, ctx_t* ctx, struct rb_call_data * cd, const rb_c
         return YJIT_CANT_COMPILE;
     }
 
+    // Callee method ID
+    //ID mid = vm_ci_mid(ci);
+    //printf("JITting call to C function \"%s\", argc: %lu\n", rb_id2name(mid), argc);
+    //print_str(cb, "");
+    //print_str(cb, "calling CFUNC:");
+    //print_str(cb, rb_id2name(mid));
+    //print_str(cb, "recv");
+    //print_ptr(cb, recv);
+
     // Create a size-exit to fall back to the interpreter
     uint8_t *side_exit = yjit_side_exit(jit, ctx);
 
@@ -1378,51 +1412,13 @@ gen_oswb_cfunc(jitstate_t* jit, ctx_t* ctx, struct rb_call_data * cd, const rb_c
 
     // Points to the receiver operand on the stack
     x86opnd_t recv = ctx_stack_opnd(ctx, argc);
-    mov(cb, REG0, recv);
-
-    // Callee method ID
-    //ID mid = vm_ci_mid(cd->ci);
-    //printf("JITting call to C function \"%s\", argc: %lu\n", rb_id2name(mid), argc);
-    //print_str(cb, "");
-    //print_str(cb, "calling CFUNC:");
-    //print_str(cb, rb_id2name(mid));
-    //print_str(cb, "recv");
-    //print_ptr(cb, recv);
-
-    // Check that the receiver is a heap object
-    {
-        uint8_t *receiver_not_heap = COUNTED_EXIT(side_exit, oswb_se_receiver_not_heap);
-        test(cb, REG0, imm_opnd(RUBY_IMMEDIATE_MASK));
-        jnz_ptr(cb, receiver_not_heap);
-        cmp(cb, REG0, imm_opnd(Qfalse));
-        je_ptr(cb, receiver_not_heap);
-        cmp(cb, REG0, imm_opnd(Qnil));
-        je_ptr(cb, receiver_not_heap);
-    }
-
-    // Pointer to the klass field of the receiver &(recv->klass)
-    x86opnd_t klass_opnd = mem_opnd(64, REG0, offsetof(struct RBasic, klass));
-
-    // FIXME: This leaks when st_insert raises NoMemoryError
-    assume_method_lookup_stable(cd->cc, cme, jit->block);
-
-    // Bail if receiver class is different from compile-time call cache class
-    jit_mov_gc_ptr(jit, cb, REG1, (VALUE)cd->cc->klass);
-    cmp(cb, klass_opnd, REG1);
-    jne_ptr(cb, COUNTED_EXIT(side_exit, oswb_se_cc_klass_differ));
 
     // Store incremented PC into current control frame in case callee raises.
     mov(cb, REG0, const_ptr_opnd(jit->pc + insn_len(BIN(opt_send_without_block))));
     mov(cb, mem_opnd(64, REG_CFP, offsetof(rb_control_frame_t, pc)), REG0);
 
-    if (METHOD_ENTRY_VISI(cme) == METHOD_VISI_PROTECTED) {
-        // Generate ancestry guard for protected callee.
-        jit_protected_guard(jit, cb, cme, side_exit);
-    }
-
     // If this function needs a Ruby stack frame
-    if (cfunc_needs_frame(cfunc))
-    {
+    if (cfunc_needs_frame(cfunc)) {
         // Stack overflow check
         // #define CHECK_VM_STACK_OVERFLOW0(cfp, sp, margin)
         // REG_CFP <= REG_SP + 4 * sizeof(VALUE) + sizeof(rb_control_frame_t)
@@ -1486,7 +1482,7 @@ gen_oswb_cfunc(jitstate_t* jit, ctx_t* ctx, struct rb_call_data * cd, const rb_c
 
         // Call check_cfunc_dispatch
         mov(cb, RDI, recv);
-        jit_mov_gc_ptr(jit, cb, RSI, (VALUE)cd);
+        jit_mov_gc_ptr(jit, cb, RSI, (VALUE)ci);
         mov(cb, RDX, const_ptr_opnd((void *)cfunc->func));
         jit_mov_gc_ptr(jit, cb, RCX, (VALUE)cme);
         call_ptr(cb, REG0, (void *)&check_cfunc_dispatch);
@@ -1502,8 +1498,7 @@ gen_oswb_cfunc(jitstate_t* jit, ctx_t* ctx, struct rb_call_data * cd, const rb_c
     lea(cb, RAX, ctx_sp_opnd(ctx, 0));
 
     // Non-variadic method
-    if (cfunc->argc >= 0)
-    {
+    if (cfunc->argc >= 0) {
         // Copy the arguments from the stack to the C argument registers
         // self is the 0th argument and is at index argc from the stack top
         for (int32_t i = 0; i < argc + 1; ++i)
@@ -1514,8 +1509,7 @@ gen_oswb_cfunc(jitstate_t* jit, ctx_t* ctx, struct rb_call_data * cd, const rb_c
         }
     }
     // Variadic method
-    if (cfunc->argc == -1)
-    {
+    if (cfunc->argc == -1) {
         // The method gets a pointer to the first argument
         // rb_f_puts(int argc, VALUE *argv, VALUE recv)
         mov(cb, C_ARG_REGS[0], imm_opnd(argc));
@@ -1540,8 +1534,7 @@ gen_oswb_cfunc(jitstate_t* jit, ctx_t* ctx, struct rb_call_data * cd, const rb_c
     mov(cb, stack_ret, RAX);
 
     // If this function needs a Ruby stack frame
-    if (cfunc_needs_frame(cfunc))
-    {
+    if (cfunc_needs_frame(cfunc)) {
         // Pop the stack frame (ec->cfp++)
         add(
             cb,
@@ -1550,14 +1543,13 @@ gen_oswb_cfunc(jitstate_t* jit, ctx_t* ctx, struct rb_call_data * cd, const rb_c
         );
     }
 
+    // TODO: gen_oswb_iseq() jumps to the next instruction with ctx->sp_offset == 0
+    // after the call, while this does not. This difference prevents
+    // the two call types from sharing the same successor.
+
     // Jump (fall through) to the call continuation block
     // We do this to end the current block after the call
-    blockid_t cont_block = { jit->iseq, jit_next_insn_idx(jit) };
-    gen_direct_jump(
-        ctx,
-        cont_block
-    );
-
+    jit_jump_to_next_insn(jit, ctx);
     return YJIT_END_BLOCK;
 }
 
@@ -1581,7 +1573,7 @@ gen_return_branch(codeblock_t* cb, uint8_t* target0, uint8_t* target1, uint8_t s
 }
 
 static codegen_status_t
-gen_oswb_iseq(jitstate_t* jit, ctx_t* ctx, struct rb_call_data * cd, const rb_callable_method_entry_t *cme, int32_t argc)
+gen_oswb_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const rb_callable_method_entry_t *cme, int32_t argc)
 {
     const rb_iseq_t *iseq = def_iseq_ptr(cme->def);
     const VALUE* start_pc = iseq->body->iseq_encoded;
@@ -1600,7 +1592,7 @@ gen_oswb_iseq(jitstate_t* jit, ctx_t* ctx, struct rb_call_data * cd, const rb_ca
         return YJIT_CANT_COMPILE;
     }
 
-    if (vm_ci_flag(cd->ci) & VM_CALL_TAILCALL) {
+    if (vm_ci_flag(ci) & VM_CALL_TAILCALL) {
         // We can't handle tailcalls
         GEN_COUNTER_INC(cb, oswb_iseq_tailcall);
         return YJIT_CANT_COMPILE;
@@ -1614,39 +1606,6 @@ gen_oswb_iseq(jitstate_t* jit, ctx_t* ctx, struct rb_call_data * cd, const rb_ca
 
     // Points to the receiver operand on the stack
     x86opnd_t recv = ctx_stack_opnd(ctx, argc);
-    mov(cb, REG0, recv);
-
-    // Callee method ID
-    //printf("JITting call to Ruby function \"%s\", argc: %d\n", rb_id2name(vm_ci_mid(cd->ci)), argc);
-    //print_str(cb, "");
-    //print_str(cb, "recv");
-    //print_ptr(cb, recv);
-
-    // Check that the receiver is a heap object
-    {
-        uint8_t *receiver_not_heap = COUNTED_EXIT(side_exit, oswb_se_receiver_not_heap);
-        test(cb, REG0, imm_opnd(RUBY_IMMEDIATE_MASK));
-        jnz_ptr(cb, receiver_not_heap);
-        cmp(cb, REG0, imm_opnd(Qfalse));
-        je_ptr(cb, receiver_not_heap);
-        cmp(cb, REG0, imm_opnd(Qnil));
-        je_ptr(cb, receiver_not_heap);
-    }
-
-    // Pointer to the klass field of the receiver &(recv->klass)
-    x86opnd_t klass_opnd = mem_opnd(64, REG0, offsetof(struct RBasic, klass));
-
-    assume_method_lookup_stable(cd->cc, cme, jit->block);
-
-    // Bail if receiver class is different from compile-time call cache class
-    jit_mov_gc_ptr(jit, cb, REG1, (VALUE)cd->cc->klass);
-    cmp(cb, klass_opnd, REG1);
-    jne_ptr(cb, COUNTED_EXIT(side_exit, oswb_se_cc_klass_differ));
-
-    if (METHOD_ENTRY_VISI(cme) == METHOD_VISI_PROTECTED) {
-        // Generate ancestry guard for protected callee.
-        jit_protected_guard(jit, cb, cme, side_exit);
-    }
 
     // Store the updated SP on the current frame (pop arguments and receiver)
     lea(cb, REG0, ctx_sp_opnd(ctx, sizeof(VALUE) * -(argc + 1)));
@@ -1721,6 +1680,7 @@ gen_oswb_iseq(jitstate_t* jit, ctx_t* ctx, struct rb_call_data * cd, const rb_ca
     ctx_stack_pop(&return_ctx, argc + 1);
     ctx_stack_push(&return_ctx, T_NONE);
     return_ctx.sp_offset = 0;
+    return_ctx.chain_depth = 0;
 
     // Write the JIT return address on the callee frame
     gen_branch(
@@ -1733,7 +1693,7 @@ gen_oswb_iseq(jitstate_t* jit, ctx_t* ctx, struct rb_call_data * cd, const rb_ca
     );
 
     //print_str(cb, "calling Ruby func:");
-    //print_str(cb, rb_id2name(vm_ci_mid(cd->ci)));
+    //print_str(cb, rb_id2name(vm_ci_mid(ci)));
 
     // Load the updated SP
     mov(cb, REG_SP, member_opnd(REG_CFP, rb_control_frame_t, sp));
@@ -1753,44 +1713,85 @@ gen_opt_send_without_block(jitstate_t* jit, ctx_t* ctx)
     // Relevant definitions:
     // rb_execution_context_t       : vm_core.h
     // invoker, cfunc logic         : method.h, vm_method.c
+    // rb_callinfo                  : vm_callinfo.h
     // rb_callable_method_entry_t   : method.h
     // vm_call_cfunc_with_frame     : vm_insnhelper.c
-    // rb_callcache                 : vm_callinfo.h
+    //
+    // For a general overview for how the interpreter calls methods,
+    // see vm_call_method().
 
-    struct rb_call_data * cd = (struct rb_call_data *)jit_get_arg(jit, 0);
-    int32_t argc = (int32_t)vm_ci_argc(cd->ci);
+    struct rb_call_data *cd = (struct rb_call_data *)jit_get_arg(jit, 0);
+    const struct rb_callinfo *ci = cd->ci; // info about the call site
+
+    int32_t argc = (int32_t)vm_ci_argc(ci);
+    ID mid = vm_ci_mid(ci);
 
     // Don't JIT calls with keyword splat
-    if (vm_ci_flag(cd->ci) & VM_CALL_KW_SPLAT) {
+    if (vm_ci_flag(ci) & VM_CALL_KW_SPLAT) {
         GEN_COUNTER_INC(cb, oswb_kw_splat);
         return YJIT_CANT_COMPILE;
     }
 
     // Don't JIT calls that aren't simple
-    if (!(vm_ci_flag(cd->ci) & VM_CALL_ARGS_SIMPLE)) {
+    if (!(vm_ci_flag(ci) & VM_CALL_ARGS_SIMPLE)) {
         GEN_COUNTER_INC(cb, oswb_callsite_not_simple);
         return YJIT_CANT_COMPILE;
     }
 
-    // Don't JIT if the inline cache is not set
-    if (!cd->cc || !cd->cc->klass) {
-        GEN_COUNTER_INC(cb, oswb_ic_empty);
+    // Defer compilation so we can specialize on class of receiver
+    if (!jit_at_current_insn(jit)) {
+        defer_compilation(jit->block, jit->insn_idx, ctx);
+        return YJIT_END_BLOCK;
+    }
+
+    VALUE comptime_recv = jit_peek_at_stack(jit, ctx, argc);
+    VALUE comptime_recv_klass = CLASS_OF(comptime_recv);
+
+    // Guard that the receiver has the same class as the one from compile time
+    uint8_t *side_exit = yjit_side_exit(jit, ctx);
+
+    // Points to the receiver operand on the stack
+    x86opnd_t recv = ctx_stack_opnd(ctx, argc);
+    mov(cb, REG0, recv);
+    if (!jit_guard_known_klass(jit, ctx, comptime_recv_klass, REG0, OSWB_MAX_DEPTH, side_exit)) {
         return YJIT_CANT_COMPILE;
     }
 
-    const rb_callable_method_entry_t *cme = vm_cc_cme(cd->cc);
-
-    // Don't JIT if the method entry is out of date
-    if (METHOD_ENTRY_INVALIDATED(cme)) {
-        GEN_COUNTER_INC(cb, oswb_invalid_cme);
+    // Do method lookup
+    const rb_callable_method_entry_t *cme = rb_callable_method_entry(comptime_recv_klass, mid);
+    if (!cme) {
+        // TODO: counter
         return YJIT_CANT_COMPILE;
     }
+
+    switch (METHOD_ENTRY_VISI(cme)) {
+    case METHOD_VISI_PUBLIC:
+        // Can always call public methods
+        break;
+    case METHOD_VISI_PRIVATE:
+        if (!(vm_ci_flag(ci) & VM_CALL_FCALL)) {
+            // Can only call private methods with FCALL callsites.
+            // (at the moment they are callsites without a receiver or an explicit `self` receiver)
+            return YJIT_CANT_COMPILE;
+        }
+        break;
+    case METHOD_VISI_PROTECTED:
+        jit_protected_callee_ancestry_guard(jit, cb, cme, side_exit);
+        break;
+    case METHOD_VISI_UNDEF:
+        RUBY_ASSERT(false && "cmes should always have a visibility");
+        break;
+    }
+
+    // Register block for invalidation
+    RUBY_ASSERT(cme->called_id == mid);
+    assume_method_lookup_stable(comptime_recv_klass, cme, jit->block);
 
     switch (cme->def->type) {
     case VM_METHOD_TYPE_ISEQ:
-        return gen_oswb_iseq(jit, ctx, cd, cme, argc);
+        return gen_oswb_iseq(jit, ctx, ci, cme, argc);
     case VM_METHOD_TYPE_CFUNC:
-        return gen_oswb_cfunc(jit, ctx, cd, cme, argc);
+        return gen_oswb_cfunc(jit, ctx, ci, cme, argc);
     case VM_METHOD_TYPE_ATTRSET:
         GEN_COUNTER_INC(cb, oswb_ivar_set_method);
         return YJIT_CANT_COMPILE;

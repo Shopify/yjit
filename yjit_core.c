@@ -209,8 +209,8 @@ add_block_version(blockid_t blockid, block_t* block)
     {
         // By writing the new block to the iseq, the iseq now
         // contains new references to Ruby objects. Run write barriers.
-        RB_OBJ_WRITTEN(iseq, Qundef, block->dependencies.cc);
-        RB_OBJ_WRITTEN(iseq, Qundef, block->dependencies.cme);
+        RB_OBJ_WRITTEN(iseq, Qundef, block->receiver_klass);
+        RB_OBJ_WRITTEN(iseq, Qundef, block->callee_cme);
 
         // Run write barriers for all objects in generated code.
         uint32_t *offset_element;
@@ -353,12 +353,23 @@ branch_stub_hit(uint32_t branch_idx, uint32_t target_idx, rb_execution_context_t
     uint8_t* dst_addr;
 
     RB_VM_LOCK_ENTER();
+    rb_vm_barrier(); // Stop other ractors since we are going to patch machine code.
+                     // It's how the GC does it.
 
     RUBY_ASSERT(branch_idx < num_branches);
     RUBY_ASSERT(target_idx < 2);
     branch_t *branch = &branch_entries[branch_idx];
     blockid_t target = branch->targets[target_idx];
     const ctx_t* target_ctx = &branch->target_ctxs[target_idx];
+
+    // :stub-sp-flush:
+    // Generated code do stack operations without modifying cfp->sp, while the
+    // cfp->sp tells the GC what values on the stack to root. Generated code
+    // generally takes care of updating cfp->sp when it calls runtime routines that
+    // could trigger GC, but for the case of branch stubs, it's inconvenient. So
+    // we do it here.
+    VALUE *const original_interp_sp = ec->cfp->sp;
+    ec->cfp->sp += target_ctx->sp_offset;
 
     //fprintf(stderr, "\nstub hit, branch idx: %d, target idx: %d\n", branch_idx, target_idx);
     //fprintf(stderr, "blockid.iseq=%p, blockid.idx=%d\n", target.iseq, target.idx);
@@ -415,6 +426,8 @@ branch_stub_hit(uint32_t branch_idx, uint32_t target_idx, rb_execution_context_t
     branch->end_pos = cb->write_pos;
     cb_set_pos(cb, cur_pos);
 
+    // Restore interpreter sp, since the code hitting the stub expects the original.
+    ec->cfp->sp = original_interp_sp;
     RB_VM_LOCK_LEAVE();
 
     // Return a pointer to the compiled block version
@@ -681,6 +694,9 @@ block_array_remove(rb_yjit_block_array_t block_array, block_t *block)
 void
 invalidate_block_version(block_t* block)
 {
+    ASSERT_vm_locking();
+    rb_vm_barrier(); // Stop other ractors since we are going to patch machine code.
+
     const rb_iseq_t *iseq = block->blockid.iseq;
 
     // fprintf(stderr, "invalidating block (%p, %d)\n", block->blockid.iseq, block->blockid.idx);
