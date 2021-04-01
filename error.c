@@ -64,7 +64,6 @@
 VALUE rb_iseqw_local_variables(VALUE iseqval);
 VALUE rb_iseqw_new(const rb_iseq_t *);
 int rb_str_end_with_asciichar(VALUE str, int c);
-VALUE rb_ident_hash_new(void);
 
 long rb_backtrace_length_limit = -1;
 VALUE rb_eEAGAIN;
@@ -1965,8 +1964,10 @@ name_err_mesg_to_str(VALUE obj)
 	    d = rb_protect(name_err_mesg_receiver_name, obj, &state);
 	    if (state || d == Qundef || d == Qnil)
 		d = rb_protect(rb_inspect, obj, &state);
-	    if (state)
+	    if (state) {
 		rb_set_errinfo(Qnil);
+	    }
+	    d = rb_check_string_type(d);
 	    if (NIL_P(d)) {
 		d = rb_any_to_s(obj);
 	    }

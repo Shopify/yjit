@@ -6093,8 +6093,8 @@ rb_ary_compact(VALUE ary)
  *    [0, 1, 2].count # => 3
  *    [].count # => 0
  *
- *  With argument +obj+, returns the count of elements <tt>eql?</tt> to +obj+:
- *    [0, 1, 2, 0].count(0) # => 2
+ *  With argument +obj+, returns the count of elements <tt>==</tt> to +obj+:
+ *    [0, 1, 2, 0.0].count(0) # => 2
  *    [0, 1, 2].count(3) # => 0
  *
  *  With no argument and a block given, calls the block with each element;
@@ -6102,7 +6102,7 @@ rb_ary_compact(VALUE ary)
  *    [0, 1, 2, 3].count {|element| element > 1} # => 2
  *
  *  With argument +obj+ and a block given, issues a warning, ignores the block,
- *  and returns the count of elements <tt>eql?</tt> to +obj+:
+ *  and returns the count of elements <tt>==</tt> to +obj+:
  */
 
 static VALUE

@@ -1067,6 +1067,21 @@ class TestPathname < Test::Unit::TestCase
 
   def test_split
     assert_equal([Pathname("dirname"), Pathname("basename")], Pathname("dirname/basename").split)
+
+    assert_separately([], <<-'end;')
+      require 'pathname'
+
+      mod = Module.new do
+        def split(_arg)
+        end
+      end
+
+      File.singleton_class.prepend(mod)
+
+      assert_raise(TypeError) do
+        Pathname('/').split
+      end
+    end;
   end
 
   def test_blockdev?
@@ -1288,11 +1303,12 @@ class TestPathname < Test::Unit::TestCase
   end
 
   def test_s_glob_3args
+    expect = RUBY_VERSION >= "3.1" ? [Pathname("."), Pathname("f")] : [Pathname("."), Pathname(".."), Pathname("f")]
     with_tmpchdir('rubytest-pathname') {|dir|
       open("f", "w") {|f| f.write "abc" }
       Dir.chdir("/") {
         assert_equal(
-          [Pathname("."), Pathname("f")],
+          expect,
           Pathname.glob("*", File::FNM_DOTMATCH, base: dir).sort)
       }
     }
