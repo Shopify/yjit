@@ -508,9 +508,15 @@ branch_stub_hit(const uint32_t branch_idx, const uint32_t target_idx, rb_executi
     VALUE *const original_interp_sp = ec->cfp->sp;
     ec->cfp->sp += target_ctx->sp_offset;
 
-    //fprintf(stderr, "\nstub hit, branch idx: %d, target idx: %d\n", branch_idx, target_idx);
-    //fprintf(stderr, "blockid.iseq=%p, blockid.idx=%d\n", target.iseq, target.idx);
+    fprintf(stderr, "\nstub hit, branch idx: %d, target idx: %d\n", branch_idx, target_idx);
+    fprintf(stderr, "blockid.iseq=%p, blockid.idx=%d\n", target.iseq, target.idx);
     //fprintf(stderr, "chain_depth=%d\n", target_ctx->chain_depth);
+    //fprintf(stderr, "current dst addr: %p\n", branch->dst_addrs[target_idx]);
+
+
+    fprintf(stderr, "target_ctx=%p\n", target_ctx);
+
+
 
     // Update the PC in the current CFP, because it
     // may be out of sync in JITted code
@@ -534,6 +540,8 @@ branch_stub_hit(const uint32_t branch_idx, const uint32_t target_idx, rb_executi
 
         // If the new block can be generated right after the branch (at cb->write_pos)
         if (cb->write_pos == branch->end_pos) {
+            fprintf(stderr, "new block can be generated after\n");
+
             // Change the branch shape to indicate the target block will be placed next
             branch->shape = (uint8_t)target_idx;
 
@@ -546,7 +554,17 @@ branch_stub_hit(const uint32_t branch_idx, const uint32_t target_idx, rb_executi
 
         p_block = gen_block_version(target, target_ctx, ec);
         RUBY_ASSERT(p_block);
-        RUBY_ASSERT(branch->shape != (uint8_t)target_idx || p_block->start_pos == branch->end_pos);
+        RUBY_ASSERT(find_block_version(target, target_ctx));
+        //RUBY_ASSERT(!(branch->shape == (uint8_t)target_idx && p_block->start_pos != branch->end_pos));
+
+        if (branch->shape == (uint8_t)target_idx && p_block->start_pos != branch->end_pos)
+        {
+            fprintf(stderr, "branch->shape=%d\n", (int)branch->shape);
+            fprintf(stderr, "branch->end_pos=%d\n", branch->end_pos);
+            fprintf(stderr, "p_block->start_pos=%d\n", p_block->start_pos);
+
+            rb_bug("wtf");
+        }
     }
 
     // Add this branch to the list of incoming branches for the target
@@ -555,6 +573,11 @@ branch_stub_hit(const uint32_t branch_idx, const uint32_t target_idx, rb_executi
     // Update the branch target address
     dst_addr = cb_get_ptr(cb, p_block->start_pos);
     branch->dst_addrs[target_idx] = dst_addr;
+
+
+    //fprintf(stderr, "new dst addr: %p\n", branch->dst_addrs[target_idx]);
+
+
 
     // Rewrite the branch with the new jump target address
     RUBY_ASSERT(branch->dst_addrs[0] != NULL);
@@ -567,6 +590,8 @@ branch_stub_hit(const uint32_t branch_idx, const uint32_t target_idx, rb_executi
     // Restore interpreter sp, since the code hitting the stub expects the original.
     ec->cfp->sp = original_interp_sp;
     RB_VM_LOCK_LEAVE();
+
+    fprintf(stderr, "stub patching done, leaving\n");
 
     // Return a pointer to the compiled block version
     return dst_addr;
@@ -837,8 +862,8 @@ invalidate_block_version(block_t* block)
 
     const rb_iseq_t *iseq = block->blockid.iseq;
 
-    // fprintf(stderr, "invalidating block (%p, %d)\n", block->blockid.iseq, block->blockid.idx);
-    // fprintf(stderr, "block=%p\n", block);
+    //fprintf(stderr, "invalidating block (%p, %d)\n", block->blockid.iseq, block->blockid.idx);
+    //fprintf(stderr, "block=%p\n", block);
 
     // Remove this block from the version array
     rb_yjit_block_array_t versions = get_version_array(iseq, block->blockid.idx);
