@@ -1,0 +1,3 @@
+# Ensure external contributors sign the contributor license agreement as part of PRs
+enabled:
+  - cla
