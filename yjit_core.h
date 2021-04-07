@@ -73,8 +73,8 @@ typedef enum yjit_temp_loc
 {
     TEMP_STACK = 0,
     TEMP_SELF,
-    //TEMP_LOCAL, // Local with index
-    //TEMP_CONST, // Small constant (0, 1, 2, Qnil, Qfalse, Qtrue)
+    TEMP_LOCAL,     // Local with index
+    //TEMP_CONST,   // Small constant (0, 1, 2, Qnil, Qfalse, Qtrue)
 
 } temp_loc_t;
 
@@ -176,7 +176,11 @@ typedef struct yjit_branch_entry
     branchgen_fn gen_fn;
 
     // Shape of the branch
-    branch_shape_t shape;
+    branch_shape_t shape : 2;
+
+    // Two flag bits to indicate target addresses
+    // have been patched (are not stubs)
+    uint8_t dst_patched : 2;
 
 } branch_t;
 
@@ -218,9 +222,12 @@ typedef struct yjit_block_version
 x86opnd_t ctx_sp_opnd(ctx_t* ctx, int32_t offset_bytes);
 x86opnd_t ctx_stack_push(ctx_t* ctx, val_type_t type);
 x86opnd_t ctx_stack_push_self(ctx_t* ctx);
+x86opnd_t ctx_stack_push_local(ctx_t* ctx, size_t local_idx);
 x86opnd_t ctx_stack_pop(ctx_t* ctx, size_t n);
 x86opnd_t ctx_stack_opnd(ctx_t* ctx, int32_t idx);
 val_type_t ctx_get_temp_type(const ctx_t* ctx, size_t idx);
+void ctx_set_temp_type(ctx_t* ctx, size_t idx, val_type_t type);
+void ctx_set_local_type(ctx_t* ctx, size_t idx, val_type_t type);
 int ctx_diff(const ctx_t* src, const ctx_t* dst);
 
 block_t* find_block_version(blockid_t blockid, const ctx_t* ctx);

@@ -71,6 +71,25 @@ ctx_stack_push_self(ctx_t* ctx)
 }
 
 /*
+Push a local variable on the stack
+*/
+x86opnd_t
+ctx_stack_push_local(ctx_t* ctx, size_t local_idx)
+{
+    // Keep track of the type of the value
+    if (ctx->stack_size < MAX_TEMP_TYPES && local_idx < MAX_LOCAL_TYPES) {
+        ctx->temp_mapping[ctx->stack_size] = (temp_mapping_t){ .kind = TEMP_LOCAL, .idx = local_idx };
+    }
+
+    ctx->stack_size += 1;
+    ctx->sp_offset += 1;
+
+    // SP points just above the topmost value
+    int32_t offset = (ctx->sp_offset - 1) * sizeof(VALUE);
+    return mem_opnd(64, REG_SP, offset);
+}
+
+/*
 Pop N values off the stack
 Return a pointer to the stack top before the pop operation
 */
@@ -126,13 +145,60 @@ ctx_get_temp_type(const ctx_t* ctx, size_t idx)
 
     temp_mapping_t mapping = ctx->temp_mapping[ctx->stack_size - 1 - idx];
 
-    if (mapping.kind == TEMP_SELF)
+    switch (mapping.kind)
+    {
+        case TEMP_SELF:
         return ctx->self_type;
-    else if (mapping.kind == TEMP_STACK)
+
+        case TEMP_STACK:
         return ctx->temp_types[ctx->stack_size - 1 - idx];
 
-    RUBY_ASSERT(false);
-    return TYPE_UNKNOWN;
+        case TEMP_LOCAL:
+        RUBY_ASSERT(mapping.idx < MAX_LOCAL_TYPES);
+        return ctx->local_types[mapping.idx];
+    }
+
+    rb_bug("unreachable");
+}
+
+/**
+Set the type of a value in the temporary stack
+*/
+void ctx_set_temp_type(ctx_t* ctx, size_t idx, val_type_t type)
+{
+    RUBY_ASSERT(idx < ctx->stack_size);
+
+    if (ctx->stack_size > MAX_TEMP_TYPES)
+        return;
+
+    temp_mapping_t mapping = ctx->temp_mapping[ctx->stack_size - 1 - idx];
+
+    switch (mapping.kind)
+    {
+        case TEMP_SELF:
+        ctx->self_type = type;
+        break;
+
+        case TEMP_STACK:
+        ctx->temp_types[ctx->stack_size - 1 - idx] = type;
+        break;
+
+        case TEMP_LOCAL:
+        RUBY_ASSERT(mapping.idx < MAX_LOCAL_TYPES);
+        ctx->local_types[mapping.idx] = type;
+        break;
+    }
+}
+
+/**
+Set the type of a local variable
+*/
+void ctx_set_local_type(ctx_t* ctx, size_t idx, val_type_t type)
+{
+    if (ctx->stack_size > MAX_LOCAL_TYPES)
+        return;
+
+    ctx->local_types[idx] = type;
 }
 
 /*
@@ -433,73 +499,85 @@ branch_stub_hit(const uint32_t branch_idx, const uint32_t target_idx, rb_executi
     blockid_t target = branch->targets[target_idx];
     const ctx_t* target_ctx = &branch->target_ctxs[target_idx];
 
-    // :stub-sp-flush:
-    // Generated code do stack operations without modifying cfp->sp, while the
-    // cfp->sp tells the GC what values on the stack to root. Generated code
-    // generally takes care of updating cfp->sp when it calls runtime routines that
-    // could trigger GC, but for the case of branch stubs, it's inconvenient. So
-    // we do it here.
-    VALUE *const original_interp_sp = ec->cfp->sp;
-    ec->cfp->sp += target_ctx->sp_offset;
+    // If this branch has already been patched, return the dst address
+    // Note: ractors can cause the same stub to be hit multiple times
+    if (branch->dst_patched & (1 << target_idx)) {
+        dst_addr =  branch->dst_addrs[target_idx];
+    }
+    else
+    {
+        //fprintf(stderr, "\nstub hit, branch idx: %d, target idx: %d\n", branch_idx, target_idx);
+        //fprintf(stderr, "blockid.iseq=%p, blockid.idx=%d\n", target.iseq, target.idx);
+        //fprintf(stderr, "chain_depth=%d\n", target_ctx->chain_depth);
 
-    //fprintf(stderr, "\nstub hit, branch idx: %d, target idx: %d\n", branch_idx, target_idx);
-    //fprintf(stderr, "blockid.iseq=%p, blockid.idx=%d\n", target.iseq, target.idx);
-    //fprintf(stderr, "chain_depth=%d\n", target_ctx->chain_depth);
+        // :stub-sp-flush:
+        // Generated code do stack operations without modifying cfp->sp, while the
+        // cfp->sp tells the GC what values on the stack to root. Generated code
+        // generally takes care of updating cfp->sp when it calls runtime routines that
+        // could trigger GC, but for the case of branch stubs, it's inconvenient. So
+        // we do it here.
+        VALUE *const original_interp_sp = ec->cfp->sp;
+        ec->cfp->sp += target_ctx->sp_offset;
 
-    // Update the PC in the current CFP, because it
-    // may be out of sync in JITted code
-    ec->cfp->pc = iseq_pc_at_idx(target.iseq, target.idx);
+        // Update the PC in the current CFP, because it
+        // may be out of sync in JITted code
+        ec->cfp->pc = iseq_pc_at_idx(target.iseq, target.idx);
 
-    // Try to find an existing compiled version of this block
-    block_t* p_block = find_block_version(target, target_ctx);
+        // Try to find an existing compiled version of this block
+        block_t* p_block = find_block_version(target, target_ctx);
 
-    // If this block hasn't yet been compiled
-    if (!p_block) {
-        // Limit the number of block versions
-        ctx_t generic_ctx = DEFAULT_CTX;
-        generic_ctx.stack_size = target_ctx->stack_size;
-        generic_ctx.sp_offset = target_ctx->sp_offset;
-        if (target_ctx->chain_depth == 0) { // guard chains implement limits individually
-            if (get_num_versions(target) >= MAX_VERSIONS - 1) {
-                //fprintf(stderr, "version limit hit in branch_stub_hit\n");
-                target_ctx = &generic_ctx;
+        // If this block hasn't yet been compiled
+        if (!p_block) {
+            // Limit the number of block versions
+            ctx_t generic_ctx = DEFAULT_CTX;
+            generic_ctx.stack_size = target_ctx->stack_size;
+            generic_ctx.sp_offset = target_ctx->sp_offset;
+            if (target_ctx->chain_depth == 0) { // guard chains implement limits individually
+                if (get_num_versions(target) >= MAX_VERSIONS - 1) {
+                    //fprintf(stderr, "version limit hit in branch_stub_hit\n");
+                    target_ctx = &generic_ctx;
+                }
             }
+
+            // If the new block can be generated right after the branch (at cb->write_pos)
+            if (cb->write_pos == branch->end_pos) {
+                // Change the branch shape to indicate the target block will be placed next
+                branch->shape = (uint8_t)target_idx;
+
+                // Rewrite the branch with the new, potentially more compact shape
+                cb_set_pos(cb, branch->start_pos);
+                branch->gen_fn(cb, branch->dst_addrs[0], branch->dst_addrs[1], branch->shape);
+                RUBY_ASSERT(cb->write_pos <= branch->end_pos && "can't enlarge branches");
+                branch->end_pos = cb->write_pos;
+            }
+
+            p_block = gen_block_version(target, target_ctx, ec);
+            RUBY_ASSERT(p_block);
+            RUBY_ASSERT(!(branch->shape == (uint8_t)target_idx && p_block->start_pos != branch->end_pos));
         }
 
-        // If the new block can be generated right after the branch (at cb->write_pos)
-        if (cb->write_pos == branch->end_pos) {
-            // Change the branch shape to indicate the target block will be placed next
-            branch->shape = (uint8_t)target_idx;
+        // Add this branch to the list of incoming branches for the target
+        rb_darray_append(&p_block->incoming, branch_idx);
 
-            // Rewrite the branch with the new, potentially more compact shape
-            cb_set_pos(cb, branch->start_pos);
-            branch->gen_fn(cb, branch->dst_addrs[0], branch->dst_addrs[1], branch->shape);
-            RUBY_ASSERT(cb->write_pos <= branch->end_pos && "can't enlarge branches");
-            branch->end_pos = cb->write_pos;
-        }
+        // Update the branch target address
+        dst_addr = cb_get_ptr(cb, p_block->start_pos);
+        branch->dst_addrs[target_idx] = dst_addr;
 
-        p_block = gen_block_version(target, target_ctx, ec);
-        RUBY_ASSERT(p_block);
-        RUBY_ASSERT(branch->shape != (uint8_t)target_idx || p_block->start_pos == branch->end_pos);
+        // Rewrite the branch with the new jump target address
+        RUBY_ASSERT(branch->dst_addrs[0] != NULL);
+        uint32_t cur_pos = cb->write_pos;
+        cb_set_pos(cb, branch->start_pos);
+        branch->gen_fn(cb, branch->dst_addrs[0], branch->dst_addrs[1], branch->shape);
+        RUBY_ASSERT(cb->write_pos == branch->end_pos && "branch can't change size");
+        cb_set_pos(cb, cur_pos);
+
+        // Mark this branch target as patched (no longer a stub)
+        branch->dst_patched |= (1 << target_idx);
+
+        // Restore interpreter sp, since the code hitting the stub expects the original.
+        ec->cfp->sp = original_interp_sp;
     }
 
-    // Add this branch to the list of incoming branches for the target
-    rb_darray_append(&p_block->incoming, branch_idx);
-
-    // Update the branch target address
-    dst_addr = cb_get_ptr(cb, p_block->start_pos);
-    branch->dst_addrs[target_idx] = dst_addr;
-
-    // Rewrite the branch with the new jump target address
-    RUBY_ASSERT(branch->dst_addrs[0] != NULL);
-    uint32_t cur_pos = cb->write_pos;
-    cb_set_pos(cb, branch->start_pos);
-    branch->gen_fn(cb, branch->dst_addrs[0], branch->dst_addrs[1], branch->shape);
-    RUBY_ASSERT(cb->write_pos == branch->end_pos && "branch can't change size");
-    cb_set_pos(cb, cur_pos);
-
-    // Restore interpreter sp, since the code hitting the stub expects the original.
-    ec->cfp->sp = original_interp_sp;
     RB_VM_LOCK_LEAVE();
 
     // Return a pointer to the compiled block version
@@ -800,6 +878,9 @@ invalidate_block_version(block_t* block)
             *branch_idx,
             target_idx
         );
+
+        // Mark this target as being a stub
+        branch->dst_patched &= ~(1 << target_idx);
 
         // Check if the invalidated block immediately follows
         bool target_next = block->start_pos == branch->end_pos;
