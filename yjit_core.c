@@ -201,10 +201,17 @@ Set the type of a local variable
 */
 void ctx_set_local_type(ctx_t* ctx, size_t idx, val_type_t type)
 {
-    if (ctx->stack_size > MAX_LOCAL_TYPES)
+    if (idx >= MAX_LOCAL_TYPES)
         return;
 
     ctx->local_types[idx] = type;
+}
+
+// Erase local variable type information
+// eg: because of a call we can't track
+void ctx_clear_local_types(ctx_t* ctx)
+{
+    memset(&ctx->local_types, 0, sizeof(ctx->local_types));
 }
 
 /*
@@ -652,7 +659,7 @@ void gen_branch(
 {
     RUBY_ASSERT(target0.iseq != NULL);
     //RUBY_ASSERT(target1.iseq != NULL);
-    RUBY_ASSERT(num_branches < MAX_BRANCHES);
+    RUBY_ASSERT_ALWAYS(num_branches < MAX_BRANCHES);
     uint32_t branch_idx = num_branches++;
 
     // Get the branch targets or stubs
@@ -703,7 +710,7 @@ void gen_direct_jump(
 )
 {
     RUBY_ASSERT(target0.iseq != NULL);
-    RUBY_ASSERT(num_branches < MAX_BRANCHES);
+    RUBY_ASSERT_ALWAYS(num_branches < MAX_BRANCHES);
     ctx_t generic_ctx;
     uint32_t branch_idx = num_branches++;
 
@@ -787,7 +794,7 @@ void defer_compilation(
 
     next_ctx.chain_depth += 1;
 
-    RUBY_ASSERT(num_branches < MAX_BRANCHES);
+    RUBY_ASSERT_ALWAYS(num_branches < MAX_BRANCHES);
     uint32_t branch_idx = num_branches++;
 
     // Get the branch targets or stubs
