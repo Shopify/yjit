@@ -202,10 +202,17 @@ Set the type of a local variable
 */
 void ctx_set_local_type(ctx_t* ctx, size_t idx, val_type_t type)
 {
-    if (ctx->stack_size > MAX_LOCAL_TYPES)
+    if (idx >= MAX_LOCAL_TYPES)
         return;
 
     ctx->local_types[idx] = type;
+}
+
+// Erase local variable type information
+// eg: because of a call we can't track
+void ctx_clear_local_types(ctx_t* ctx)
+{
+    memset(&ctx->local_types, 0, sizeof(ctx->local_types));
 }
 
 /*
