@@ -1,6 +1,6 @@
 require 'optparse'
 parser = OptionParser.new
-parser.on('-x', '--xxx', 'Short and long, simple') do |value|
+parser.on('-x', '--xxx', 'Short and long, no argument') do |value|
   p ['--xxx', value]
 end
 parser.on('-yYYY', '--yyy', 'Short and long, required argument') do |value|
