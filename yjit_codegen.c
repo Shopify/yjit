@@ -256,13 +256,13 @@ yjit_entry_prologue(void)
     return code_ptr;
 }
 
-
 // Generate code to check for interrupts and take a side-exit
 static void
 yjit_check_ints(codeblock_t* cb, uint8_t* side_exit)
 {
     // Check for interrupts
     // see RUBY_VM_CHECK_INTS(ec) macro
+    ADD_COMMENT(cb, "RUBY_VM_CHECK_INTS(ec)");
     mov(cb, REG0_32, member_opnd(REG_EC, rb_execution_context_t, interrupt_mask));
     not(cb, REG0_32);
     test(cb, member_opnd(REG_EC, rb_execution_context_t, interrupt_flag), REG0_32);
@@ -287,7 +287,6 @@ jit_jump_to_next_insn(jitstate_t *jit, const ctx_t *current_context)
         jump_block
     );
 }
-
 
 // Compile a sequence of bytecode instructions for a given basic block version
 void
@@ -517,22 +516,33 @@ gen_putself(jitstate_t* jit, ctx_t* ctx)
     return YJIT_KEEP_COMPILING;
 }
 
+// Compute the index of a local variable from its slot index
+uint32_t slot_to_local_idx(const rb_iseq_t *iseq, int32_t slot_idx)
+{
+    // Convoluted rules from local_var_name() in iseq.c
+    int32_t local_table_size = iseq->body->local_table_size;
+    int32_t op = slot_idx - VM_ENV_DATA_SIZE;
+    int32_t local_idx = local_idx = local_table_size - op - 1;
+    RUBY_ASSERT(local_idx >= 0 && local_idx < local_table_size);
+    return (uint32_t)local_idx;
+}
+
 static codegen_status_t
 gen_getlocal_wc0(jitstate_t* jit, ctx_t* ctx)
 {
+    // Compute the offset from BP to the local
+    int32_t slot_idx = (int32_t)jit_get_arg(jit, 0);
+    const int32_t offs = -(SIZEOF_VALUE * slot_idx);
+    uint32_t local_idx = slot_to_local_idx(jit->iseq, slot_idx);
+
     // Load environment pointer EP from CFP
     mov(cb, REG0, member_opnd(REG_CFP, rb_control_frame_t, ep));
-
-    // Compute the offset from BP to the local
-    int32_t local_idx = (int32_t)jit_get_arg(jit, 0);
-    const int32_t offs = -(SIZEOF_VALUE * local_idx);
 
     // Load the local from the EP
     mov(cb, REG0, mem_opnd(64, REG0, offs));
 
     // Write the local at SP
     x86opnd_t stack_top = ctx_stack_push_local(ctx, local_idx);
-    //x86opnd_t stack_top = ctx_stack_push(ctx, TYPE_UNKNOWN);
     mov(cb, stack_top, REG0);
 
     return YJIT_KEEP_COMPILING;
@@ -581,7 +591,8 @@ gen_setlocal_wc0(jitstate_t* jit, ctx_t* ctx)
     }
     */
 
-    int32_t local_idx = (int32_t)jit_get_arg(jit, 0);
+    int32_t slot_idx = (int32_t)jit_get_arg(jit, 0);
+    uint32_t local_idx = slot_to_local_idx(jit->iseq, slot_idx);
 
     // Load environment pointer EP from CFP
     mov(cb, REG0, member_opnd(REG_CFP, rb_control_frame_t, ep));
@@ -605,7 +616,7 @@ gen_setlocal_wc0(jitstate_t* jit, ctx_t* ctx)
     mov(cb, REG1, stack_top);
 
     // Write the value at the environment pointer
-    const int32_t offs = -8 * local_idx;
+    const int32_t offs = -8 * slot_idx;
     mov(cb, mem_opnd(64, REG0, offs), REG1);
 
     return YJIT_KEEP_COMPILING;
@@ -1700,7 +1711,7 @@ gen_oswb_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
     lea(cb, REG0, ctx_sp_opnd(ctx, sizeof(VALUE) * -(argc + 1)));
     mov(cb, member_opnd(REG_CFP, rb_control_frame_t, sp), REG0);
 
-    // Store the next PC i the current frame
+    // Store the next PC in the current frame
     mov(cb, REG0, const_ptr_opnd(jit->pc + insn_len(BIN(opt_send_without_block))));
     mov(cb, mem_opnd(64, REG_CFP, offsetof(rb_control_frame_t, pc)), REG0);
 
@@ -1763,6 +1774,15 @@ gen_oswb_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
     // Stub so we can return to JITted code
     blockid_t return_block = { jit->iseq, jit_next_insn_idx(jit) };
 
+    // Create a context for the callee
+    ctx_t callee_ctx = DEFAULT_CTX;
+
+    // Set the argument type in the callee's context
+    for (int32_t arg_idx = 0; arg_idx < argc; ++arg_idx) {
+        val_type_t arg_type = ctx_get_opnd_type(ctx, OPND_STACK(argc - arg_idx - 1));
+        ctx_set_local_type(&callee_ctx, arg_idx, arg_type);
+    }
+
     // Pop arguments and receiver in return context, push the return value
     // After the return, the JIT and interpreter SP will match up
     ctx_t return_ctx = *ctx;
@@ -1784,12 +1804,12 @@ gen_oswb_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
     //print_str(cb, "calling Ruby func:");
     //print_str(cb, rb_id2name(vm_ci_mid(ci)));
 
-    // Load the updated SP
+    // Load the updated SP from the CFP
     mov(cb, REG_SP, member_opnd(REG_CFP, rb_control_frame_t, sp));
 
     // Directly jump to the entry point of the callee
     gen_direct_jump(
-        &DEFAULT_CTX,
+        &callee_ctx,
         (blockid_t){ iseq, 0 }
     );
 
@@ -1943,6 +1963,7 @@ gen_leave(jitstate_t* jit, ctx_t* ctx)
     mov(cb, REG0, member_opnd(REG_CFP, rb_control_frame_t, ep));
 
     // if (flags & VM_FRAME_FLAG_FINISH) != 0
+    ADD_COMMENT(cb, "check for finish frame");
     x86opnd_t flags_opnd = mem_opnd(64, REG0, sizeof(VALUE) * VM_ENV_DATA_INDEX_FLAGS);
     test(cb, flags_opnd, imm_opnd(VM_FRAME_FLAG_FINISH));
     jnz_ptr(cb, COUNTED_EXIT(side_exit, leave_se_finish_frame));
@@ -1968,6 +1989,7 @@ gen_leave(jitstate_t* jit, ctx_t* ctx)
     mov(cb, mem_opnd(64, REG_SP, -SIZEOF_VALUE), REG0);
 
     // If the return address is NULL, fall back to the interpreter
+    ADD_COMMENT(cb, "check for jit return");
     int FALLBACK_LABEL = cb_new_label(cb, "FALLBACK");
     test(cb, REG1, REG1);
     jz_label(cb, FALLBACK_LABEL);
