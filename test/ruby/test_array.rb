@@ -1100,6 +1100,19 @@ class TestArray < Test::Unit::TestCase
     assert_not_include(a, [1,2])
   end
 
+  def test_intersect?
+    a = @cls[ 1, 2, 3]
+    assert_send([a, :intersect?, [3]])
+    assert_not_send([a, :intersect?, [4]])
+    assert_not_send([a, :intersect?, []])
+  end
+
+  def test_intersect_big_array
+    assert_send([@cls[ 1, 4, 5 ]*64, :intersect?, @cls[ 1, 2, 3 ]*64])
+    assert_not_send([@cls[ 1, 2, 3 ]*64, :intersect?, @cls[ 4, 5, 6 ]*64])
+    assert_not_send([@cls[], :intersect?, @cls[ 1, 2, 3 ]*64])
+  end
+
   def test_index
     a = @cls[ 'cat', 99, /a/, 99, @cls[ 1, 2, 3] ]
     assert_equal(0, a.index('cat'))
@@ -2720,6 +2733,17 @@ class TestArray < Test::Unit::TestCase
       super
     end
     assert_equal [[42, 1]], [42].zip(r), bug8153
+  end
+
+  def test_zip_with_enumerator
+    bug17814 = "ruby-core:103513"
+
+    step = 0.step
+    e = Enumerator.produce { step.next }
+    a = %w(a b c)
+    assert_equal([["a", 0], ["b", 1], ["c", 2]], a.zip(e))
+    assert_equal([["a", 3], ["b", 4], ["c", 5]], a.zip(e))
+    assert_equal([["a", 6], ["b", 7], ["c", 8]], a.zip(e))
   end
 
   def test_transpose
