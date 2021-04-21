@@ -583,6 +583,7 @@ typedef struct RVALUE {
 	struct RMatch  match;
 	struct RRational rational;
 	struct RComplex complex;
+        struct RSymbol symbol;
 	union {
 	    rb_cref_t cref;
 	    struct vm_svar svar;
@@ -5573,7 +5574,6 @@ init_mark_stack(mark_stack_t *stack)
 
     MEMZERO(stack, mark_stack_t, 1);
     stack->index = stack->limit = STACK_CHUNK_SIZE;
-    stack->cache_size = 0;
 
     for (i=0; i < 4; i++) {
         add_stack_chunk_cache(stack, stack_chunk_alloc());
@@ -9028,9 +9028,12 @@ gc_ref_update_imemo(rb_objspace_t *objspace, VALUE obj)
       case imemo_env:
         {
             rb_env_t *env = (rb_env_t *)obj;
-            TYPED_UPDATE_IF_MOVED(objspace, rb_iseq_t *, env->iseq);
-            UPDATE_IF_MOVED(objspace, env->ep[VM_ENV_DATA_INDEX_ENV]);
-            gc_update_values(objspace, (long)env->env_size, (VALUE *)env->env);
+            if (LIKELY(env->ep)) {
+                // just after newobj() can be NULL here.
+                TYPED_UPDATE_IF_MOVED(objspace, rb_iseq_t *, env->iseq);
+                UPDATE_IF_MOVED(objspace, env->ep[VM_ENV_DATA_INDEX_ENV]);
+                gc_update_values(objspace, (long)env->env_size, (VALUE *)env->env);
+            }
         }
         break;
       case imemo_cref:

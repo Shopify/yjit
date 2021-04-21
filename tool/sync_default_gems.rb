@@ -95,12 +95,16 @@ def sync_default_gems(gem)
     cp_r(Dir.glob("#{upstream}/lib/rubygems*"), "lib")
     cp_r("#{upstream}/test/rubygems", "test")
   when "bundler"
-    rm_rf(%w[lib/bundler lib/bundler.rb libexec/bundler libexec/bundle spec/bundler] + Dir.glob("man/{bundle*,gemfile*}"))
+    rm_rf(%w[lib/bundler lib/bundler.rb libexec/bundler libexec/bundle spec/bundler tool/bundler/*] + Dir.glob("man/{bundle*,gemfile*}"))
     cp_r(Dir.glob("#{upstream}/bundler/lib/bundler*"), "lib")
     cp_r(Dir.glob("#{upstream}/bundler/exe/bundle*"), "libexec")
     cp_r("#{upstream}/bundler/bundler.gemspec", "lib/bundler")
     cp_r("#{upstream}/bundler/spec", "spec/bundler")
+    cp_r(Dir.glob("#{upstream}/bundler/tool/bundler/test_gems*"), "tool/bundler")
+    cp_r(Dir.glob("#{upstream}/bundler/tool/bundler/rubocop_gems*"), "tool/bundler")
+    cp_r(Dir.glob("#{upstream}/bundler/tool/bundler/standard_gems*"), "tool/bundler")
     cp_r(Dir.glob("#{upstream}/bundler/man/*.{1,5,1\.txt,5\.txt,ronn}"), "man")
+    `git checkout lib/bundler/bundler.gemspec`
     rm_rf(%w[spec/bundler/support/artifice/vcr_cassettes])
   when "rdoc"
     rm_rf(%w[lib/rdoc lib/rdoc.rb test/rdoc libexec/rdoc libexec/ri])
@@ -349,6 +353,15 @@ def sync_default_gems(gem)
   end
 end
 
+IGNORE_FILE_PATTERN =
+  /\A(?:[A-Z]\w*\.(?:md|txt)
+  |[^\/]+\.yml
+  |\.git.*
+  |[A-Z]\w+file
+  |COPYING
+  |rakelib\/
+  )\z/x
+
 def message_filter(repo, sha)
   log = STDIN.read
   print "[#{repo}] ", log.sub(/\s*(?=(?i:\nCo-authored-by:.*)*\Z)/) {
@@ -359,11 +372,6 @@ end
 def sync_default_gems_with_commits(gem, ranges, edit: nil)
   repo = REPOSITORIES[gem.to_sym]
   puts "Sync #{repo} with commit history."
-
-  file_pattern = gem == repo ? gem : "{#{gem},#{repo}}"
-  file_pattern = "*/#{file_pattern}{,.*,/**/*}"
-  fnm_option = File::FNM_PATHNAME | File::FNM_DOTMATCH
-  file_match = proc {|file| File.fnmatch?(file_pattern, file, fnm_option)}
 
   IO.popen(%W"git remote") do |f|
     unless f.read.split.include?(gem)
@@ -390,9 +398,8 @@ def sync_default_gems_with_commits(gem, ranges, edit: nil)
 
   # Ignore Merge commit and insufficiency commit for ruby core repository.
   commits.delete_if do |sha, subject|
-    next true if /^(?:Auto )?Merge/ =~ subject
-    IO.popen(%W"git diff-tree --no-commit-id --name-only -r #{sha}", &:read)
-      .split("\n").none?(&file_match)
+    files = IO.popen(%W"git diff-tree --no-commit-id --name-only -r #{sha}", &:readlines)
+    subject =~ /^Merge/ || subject =~ /^Auto Merge/ || files.all?{|file| file =~ IGNORE_FILE_PATTERN}
   end
 
   if commits.empty?
@@ -429,9 +436,10 @@ def sync_default_gems_with_commits(gem, ranges, edit: nil)
     if result.empty?
       skipped = true
     elsif /^CONFLICT/ =~ result
-      result = IO.popen(%W"git status --porcelain", &:readlines).map! {|line| line[/^.U (.*)/, 1]}
+      result = IO.popen(%W"git status --porcelain", &:readlines).each(&:chomp!)
+      result.map! {|line| line[/^.U (.*)/, 1]}
       result.compact!
-      conflict, ignore = result.partition(&file_match)
+      ignore, conflict = result.partition {|name| IGNORE_FILE_PATTERN =~ name}
       unless ignore.empty?
         system(*%W"git reset HEAD --", *ignore)
         File.unlink(*ignore)

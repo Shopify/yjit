@@ -3,6 +3,8 @@
 # Used by the "make install" target to install Ruby.
 # See common.mk for more details.
 
+ENV["SDKROOT"] ||= "" if /darwin/ =~ RUBY_PLATFORM
+
 begin
   load "./rbconfig.rb"
 rescue LoadError
@@ -20,6 +22,7 @@ require 'fileutils'
 require 'shellwords'
 require 'optparse'
 require 'optparse/shellwords'
+require 'pathname'
 require 'rubygems'
 begin
   require "zlib"
@@ -701,15 +704,28 @@ module RbInstall
         when "lib"
           base = @base_dir
           prefix = base.sub(/lib\/.*?\z/, "")
+          # for lib/net/net-smtp.gemspec
+          if m = Pathname.new(@gemspec).basename(".gemspec").to_s.match(/.*\-(.*)\z/)
+            base = "#{@base_dir}/#{m[1]}" unless remove_prefix(prefix, @base_dir).include?(m[1])
+          end
         end
 
-        if base
-          Dir.glob("#{base}{.rb,/**/*.rb}").collect do |ruby_source|
-            remove_prefix(prefix, ruby_source)
-          end
-        else
-          [File.basename(@gemspec, '.gemspec') + '.rb']
+        files = if base
+                  Dir.glob("#{base}{.rb,/**/*.rb}").collect do |ruby_source|
+                    remove_prefix(prefix, ruby_source)
+                  end
+                else
+                  [File.basename(@gemspec, '.gemspec') + '.rb']
+                end
+
+        case Pathname.new(@gemspec).basename(".gemspec").to_s
+        when "net-http"
+          files << "lib/net/https.rb"
+        when "optparse"
+          files << "lib/optionparser.rb"
         end
+
+        files
       end
 
       def built_libraries
