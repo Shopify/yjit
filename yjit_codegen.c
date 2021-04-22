@@ -26,6 +26,9 @@ codeblock_t* cb = NULL;
 static codeblock_t outline_block;
 codeblock_t* ocb = NULL;
 
+// Code for exiting back to the interpreter from the leave insn
+static void *leave_exit_code;
+
 // Print the current source location for debugging purposes
 RBIMPL_ATTR_MAYBE_UNUSED()
 static void
@@ -112,85 +115,6 @@ jit_peek_at_self(jitstate_t *jit, ctx_t *ctx)
 
 static bool jit_guard_known_klass(jitstate_t *jit, ctx_t* ctx, VALUE known_klass, insn_opnd_t insn_opnd, const int max_chain_depth, uint8_t *side_exit);
 
-// Save YJIT registers prior to a C call
-static void
-yjit_save_regs(codeblock_t* cb)
-{
-    push(cb, REG_CFP);
-    push(cb, REG_EC);
-    push(cb, REG_SP);
-    push(cb, REG_SP); // Maintain 16-byte RSP alignment
-}
-
-// Restore YJIT registers after a C call
-static void
-yjit_load_regs(codeblock_t* cb)
-{
-    pop(cb, REG_SP); // Maintain 16-byte RSP alignment
-    pop(cb, REG_SP);
-    pop(cb, REG_EC);
-    pop(cb, REG_CFP);
-}
-
-// Generate an inline exit to return to the interpreter
-static uint8_t *
-yjit_gen_exit(jitstate_t *jit, ctx_t *ctx, codeblock_t *cb)
-{
-    uint8_t *code_ptr = cb_get_ptr(ocb, ocb->write_pos);
-
-    VALUE *exit_pc = jit->pc;
-
-    // YJIT only ever patches the first instruction in an iseq
-    if (jit->insn_idx == 0) {
-        // Table mapping opcodes to interpreter handlers
-        const void *const *handler_table = rb_vm_get_insns_address_table();
-
-        // Write back the old instruction at the exit PC
-        // Otherwise the interpreter may jump right back to the
-        // JITted code we're trying to exit
-        int exit_opcode = yjit_opcode_at_pc(jit->iseq, exit_pc);
-        void* handler_addr = (void*)handler_table[exit_opcode];
-        mov(cb, REG0, const_ptr_opnd(exit_pc));
-        mov(cb, REG1, const_ptr_opnd(handler_addr));
-        mov(cb, mem_opnd(64, REG0, 0), REG1);
-    }
-
-    // Generate the code to exit to the interpreters
-    // Write the adjusted SP back into the CFP
-    if (ctx->sp_offset != 0) {
-        x86opnd_t stack_pointer = ctx_sp_opnd(ctx, 0);
-        lea(cb, REG_SP, stack_pointer);
-        mov(cb, member_opnd(REG_CFP, rb_control_frame_t, sp), REG_SP);
-    }
-
-    // Update the CFP on the EC
-    mov(cb, member_opnd(REG_EC, rb_execution_context_t, cfp), REG_CFP);
-
-    // Put PC into the return register, which the post call bytes dispatches to
-    mov(cb, RAX, const_ptr_opnd(exit_pc));
-    mov(cb, member_opnd(REG_CFP, rb_control_frame_t, pc), RAX);
-
-    // Accumulate stats about interpreter exits
-#if RUBY_DEBUG
-    if (rb_yjit_opts.gen_stats) {
-        mov(cb, RDI, const_ptr_opnd(exit_pc));
-        call_ptr(cb, RSI, (void *)&rb_yjit_count_side_exit_op);
-    }
-#endif
-
-    cb_write_post_call_bytes(cb);
-
-    return code_ptr;
-}
-
-
-// A shorthand for generating an exit in the outline block
-static uint8_t *
-yjit_side_exit(jitstate_t *jit, ctx_t *ctx)
-{
-    return yjit_gen_exit(jit, ctx, ocb);
-}
-
 #if RUBY_DEBUG
 
 // Increment a profiling counter with counter_name
@@ -246,11 +170,109 @@ yjit_comment_array_t yjit_code_comments;
 
 #endif // if RUBY_DEBUG
 
+// Save YJIT registers prior to a C call
+static void
+yjit_save_regs(codeblock_t* cb)
+{
+    push(cb, REG_CFP);
+    push(cb, REG_EC);
+    push(cb, REG_SP);
+    push(cb, REG_SP); // Maintain 16-byte RSP alignment
+}
+
+// Restore YJIT registers after a C call
+static void
+yjit_load_regs(codeblock_t* cb)
+{
+    pop(cb, REG_SP); // Maintain 16-byte RSP alignment
+    pop(cb, REG_SP);
+    pop(cb, REG_EC);
+    pop(cb, REG_CFP);
+}
+
+// Generate an inline exit to return to the interpreter
+static uint8_t *
+yjit_gen_exit(jitstate_t *jit, ctx_t *ctx, codeblock_t *cb)
+{
+    uint8_t *code_ptr = cb_get_ptr(cb, cb->write_pos);
+
+    VALUE *exit_pc = jit->pc;
+
+    // YJIT only ever patches the first instruction in an iseq
+    if (jit->insn_idx == 0) {
+        // Table mapping opcodes to interpreter handlers
+        const void *const *handler_table = rb_vm_get_insns_address_table();
+
+        // Write back the old instruction at the exit PC
+        // Otherwise the interpreter may jump right back to the
+        // JITted code we're trying to exit
+        int exit_opcode = yjit_opcode_at_pc(jit->iseq, exit_pc);
+        void* handler_addr = (void*)handler_table[exit_opcode];
+        mov(cb, REG0, const_ptr_opnd(exit_pc));
+        mov(cb, REG1, const_ptr_opnd(handler_addr));
+        mov(cb, mem_opnd(64, REG0, 0), REG1);
+    }
+
+    // Generate the code to exit to the interpreters
+    // Write the adjusted SP back into the CFP
+    if (ctx->sp_offset != 0) {
+        x86opnd_t stack_pointer = ctx_sp_opnd(ctx, 0);
+        lea(cb, REG_SP, stack_pointer);
+        mov(cb, member_opnd(REG_CFP, rb_control_frame_t, sp), REG_SP);
+    }
+
+    // Update the CFP on the EC
+    mov(cb, member_opnd(REG_EC, rb_execution_context_t, cfp), REG_CFP);
+
+    // Put PC into the return register, which the post call bytes dispatches to
+    mov(cb, RAX, const_ptr_opnd(exit_pc));
+    mov(cb, member_opnd(REG_CFP, rb_control_frame_t, pc), RAX);
+
+    // Accumulate stats about interpreter exits
+#if RUBY_DEBUG
+    if (rb_yjit_opts.gen_stats) {
+        mov(cb, RDI, const_ptr_opnd(exit_pc));
+        call_ptr(cb, RSI, (void *)&rb_yjit_count_side_exit_op);
+    }
+#endif
+
+    cb_write_post_call_bytes(cb);
+
+    return code_ptr;
+}
+
+// Generate a continuation for gen_leave() that exits to the interpreter at REG_CFP->pc.
+static uint8_t *
+yjit_gen_leave_exit(codeblock_t *cb)
+{
+    uint8_t *code_ptr = cb_get_ptr(cb, cb->write_pos);
+
+    // Note, gen_leave() fully reconstructs interpreter state before
+    // coming here.
+
+    // Every exit to the interpreter should be counted
+    GEN_COUNTER_INC(cb, leave_interp_return);
+
+    // Put PC into the return register, which the post call bytes dispatches to
+    mov(cb, RAX, member_opnd(REG_CFP, rb_control_frame_t, pc));
+
+    cb_write_post_call_bytes(cb);
+
+    return code_ptr;
+}
+
+// A shorthand for generating an exit in the outline block
+static uint8_t *
+yjit_side_exit(jitstate_t *jit, ctx_t *ctx)
+{
+    return yjit_gen_exit(jit, ctx, ocb);
+}
+
 /*
 Compile an interpreter entry block to be inserted into an iseq
 Returns `NULL` if compilation fails.
 */
-uint8_t*
+uint8_t *
 yjit_entry_prologue(void)
 {
     RUBY_ASSERT(cb != NULL);
@@ -269,6 +291,11 @@ yjit_entry_prologue(void)
 
     // Load the current SP from the CFP into REG_SP
     mov(cb, REG_SP, member_opnd(REG_CFP, rb_control_frame_t, sp));
+
+    // Setup cfp->jit_return
+    // TODO: this could use an IP relative LEA instead of an 8 byte immediate
+    mov(cb, REG0, const_ptr_opnd(leave_exit_code));
+    mov(cb, member_opnd(REG_CFP, rb_control_frame_t, jit_return), REG0);
 
     return code_ptr;
 }
@@ -2062,9 +2089,6 @@ gen_leave(jitstate_t* jit, ctx_t* ctx)
     // Load the return value
     mov(cb, REG0, ctx_stack_pop(ctx, 1));
 
-    // Load the JIT return address
-    mov(cb, REG1, member_opnd(REG_CFP, rb_control_frame_t, jit_return));
-
     // Pop the current frame (ec->cfp++)
     // Note: the return PC is already in the previous CFP
     add(cb, REG_CFP, imm_opnd(sizeof(rb_control_frame_t)));
@@ -2076,20 +2100,9 @@ gen_leave(jitstate_t* jit, ctx_t* ctx)
     mov(cb, REG_SP, member_opnd(REG_CFP, rb_control_frame_t, sp));
     mov(cb, mem_opnd(64, REG_SP, -SIZEOF_VALUE), REG0);
 
-    // If the return address is NULL, fall back to the interpreter
-    ADD_COMMENT(cb, "check for jit return");
-    int FALLBACK_LABEL = cb_new_label(cb, "FALLBACK");
-    test(cb, REG1, REG1);
-    jz_label(cb, FALLBACK_LABEL);
-
-    // Jump to the JIT return address
-    jmp_rm(cb, REG1);
-
-    // Fall back to the interpreter
-    cb_write_label(cb, FALLBACK_LABEL);
-    cb_link_labels(cb);
-    GEN_COUNTER_INC(cb, leave_interp_return);
-    cb_write_post_call_bytes(cb);
+    // Jump to the JIT return address on the frame that was just popped
+    const int32_t offset_to_jit_return = -((int32_t)sizeof(rb_control_frame_t)) + (int32_t)offsetof(rb_control_frame_t, jit_return);
+    jmp_rm(cb, mem_opnd(64, REG_CFP, offset_to_jit_return));
 
     return YJIT_END_BLOCK;
 }
@@ -2151,11 +2164,16 @@ yjit_init_codegen(void)
 {
     // Initialize the code blocks
     uint32_t mem_size = 128 * 1024 * 1024;
-    uint8_t* mem_block = alloc_exec_mem(mem_size);
+    uint8_t *mem_block = alloc_exec_mem(mem_size);
+
     cb = &block;
     cb_init(cb, mem_block, mem_size/2);
+
     ocb = &outline_block;
     cb_init(ocb, mem_block + mem_size/2, mem_size/2);
+
+    // Generate the interpreter exit code for leave
+    leave_exit_code = yjit_gen_leave_exit(cb);
 
     // Map YARV opcodes to the corresponding codegen functions
     yjit_reg_op(BIN(dup), gen_dup);
