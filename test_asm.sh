@@ -1,9 +1,9 @@
-# NOTE: I did not know what would be the sensible way to compile
-# and run these tests from the Ruby makefile
+set -e
+set -x
 
 clear
 
-clang -std=gnu99 -Wall -Werror -Wshorten-64-to-32 yjit_asm.c yjit_asm_tests.c -o asm_test
+cc -std=gnu99 -Wall -Werror -Wshorten-64-to-32 yjit_asm.c yjit_asm_tests.c -o asm_test
 
 ./asm_test
 
