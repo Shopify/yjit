@@ -20,3 +20,5 @@ jobs:
           path: src
       - name: Run ASM tests
         run: ./test_asm.sh
+        with:
+          path: src
