@@ -1124,6 +1124,8 @@ gen_opt_gt(jitstate_t* jit, ctx_t* ctx)
     return gen_fixnum_cmp(jit, ctx, cmovg);
 }
 
+static codegen_status_t gen_opt_send_without_block(jitstate_t *jit, ctx_t *ctx);
+
 static codegen_status_t
 gen_opt_aref(jitstate_t *jit, ctx_t *ctx)
 {
@@ -1265,8 +1267,10 @@ gen_opt_aref(jitstate_t *jit, ctx_t *ctx)
         jit_jump_to_next_insn(jit, ctx);
         return YJIT_END_BLOCK;
     }
-
-    return YJIT_CANT_COMPILE;
+    else {
+        // General case. Call the [] method.
+        return gen_opt_send_without_block(jit, ctx);
+    }
 }
 
 static codegen_status_t
