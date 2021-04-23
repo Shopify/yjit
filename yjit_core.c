@@ -3,6 +3,7 @@
 #include "vm_sync.h"
 #include "builtin.h"
 
+#include "yjit.h"
 #include "yjit_asm.h"
 #include "yjit_utils.h"
 #include "yjit_iface.h"
@@ -420,9 +421,13 @@ block_t* find_block_version(blockid_t blockid, const ctx_t* ctx)
         }
     }
 
-    // If we're below the version limit, don't settle for an imperfect match
-    if (best_diff > 0 && rb_darray_size(versions) < MAX_VERSIONS) {
-        return NULL;
+    // If greedy versioning is enabled
+    if (rb_yjit_opts.greedy_versioning)
+    {
+        // If we're below the version limit, don't settle for an imperfect match
+        if ((uint32_t)rb_darray_size(versions) + 1 < rb_yjit_opts.version_limit && best_diff > 0) {
+            return NULL;
+        }
     }
 
     return best_version;
@@ -432,23 +437,23 @@ block_t* find_block_version(blockid_t blockid, const ctx_t* ctx)
 // Note that this will mutate the ctx argument
 void limit_block_versions(blockid_t blockid, ctx_t* ctx)
 {
-    // Guard chains implement limits separately
+    // Guard chains implement limits separately, do nothing
     if (ctx->chain_depth > 0)
         return;
 
-    // If the specialized version limit was not yet hit for this blockid
-    if (get_num_versions(blockid) < MAX_VERSIONS)
-        return;
+    // If this block version we're about to add will hit the version limit
+    if (get_num_versions(blockid) + 1 >= rb_yjit_opts.version_limit)
+    {
+        // Produce a generic context that stores no type information,
+        // but still respects the stack_size and sp_offset constraints
+        // This new context will then match all future requests.
+        ctx_t generic_ctx = DEFAULT_CTX;
+        generic_ctx.stack_size = ctx->stack_size;
+        generic_ctx.sp_offset = ctx->sp_offset;
 
-    // Produce a generic context that stores no type information,
-    // but still respects the stack_size and sp_offset constraints
-    // This new context will then match all future requests.
-    ctx_t generic_ctx = DEFAULT_CTX;
-    generic_ctx.stack_size = ctx->stack_size;
-    generic_ctx.sp_offset = ctx->sp_offset;
-
-    // Mutate the incoming context
-    *ctx = generic_ctx;
+        // Mutate the incoming context
+        *ctx = generic_ctx;
+    }
 }
 
 // Compile a new block version immediately
