@@ -16961,6 +16961,7 @@ yjit_core.$(OBJEXT): {$(VPATH)}yjit_asm.h
 yjit_core.$(OBJEXT): {$(VPATH)}yjit_codegen.h
 yjit_core.$(OBJEXT): {$(VPATH)}yjit_core.c
 yjit_core.$(OBJEXT): {$(VPATH)}yjit_core.h
+yjit_core.$(OBJEXT): {$(VPATH)}yjit.h
 yjit_core.$(OBJEXT): {$(VPATH)}yjit_iface.h
 yjit_core.$(OBJEXT): {$(VPATH)}yjit_utils.h
 yjit_iface.$(OBJEXT): $(CCAN_DIR)/check_type/check_type.h
