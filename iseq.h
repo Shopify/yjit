@@ -301,7 +301,7 @@ VALUE rb_iseq_defined_string(enum defined_type type);
 /* vm.c */
 VALUE rb_iseq_local_variables(const rb_iseq_t *iseq);
 
-NOINLINE(void rb_yjit_empty_func_with_ec(rb_control_frame_t *cfp, rb_execution_context_t *ec));
+NOINLINE(void rb_yjit_empty_func_with_ec(rb_execution_context_t *ec, rb_control_frame_t *cfp));
 
 RUBY_SYMBOL_EXPORT_END
 

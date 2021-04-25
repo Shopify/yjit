@@ -32,7 +32,7 @@ INSN_ENTRY(yjit_call_example_with_ec)
 #if USE_MACHINE_REGS
     // assumes USE_MACHINE_REGS, aka reg_pc setup,
     // aka #define SET_PC(x) (reg_cfp->pc = reg_pc = (x))
-    rb_yjit_empty_func_with_ec(GET_CFP(), ec);
+    rb_yjit_empty_func_with_ec(ec, GET_CFP());
     RESTORE_REGS();
 #endif
     END_INSN(yjit_call_example_with_ec);
