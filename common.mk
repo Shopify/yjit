@@ -16957,6 +16957,7 @@ yjit_core.$(OBJEXT): {$(VPATH)}vm_core.h
 yjit_core.$(OBJEXT): {$(VPATH)}vm_debug.h
 yjit_core.$(OBJEXT): {$(VPATH)}vm_opts.h
 yjit_core.$(OBJEXT): {$(VPATH)}vm_sync.h
+yjit_core.$(OBJEXT): {$(VPATH)}yjit.h
 yjit_core.$(OBJEXT): {$(VPATH)}yjit_asm.h
 yjit_core.$(OBJEXT): {$(VPATH)}yjit_codegen.h
 yjit_core.$(OBJEXT): {$(VPATH)}yjit_core.c
