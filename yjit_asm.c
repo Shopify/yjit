@@ -125,20 +125,66 @@ x86opnd_t const_ptr_opnd(const void *ptr)
     return opnd;
 }
 
+// Align the current write position to a multiple of bytes
+uint8_t* align_ptr(uint8_t* ptr, uint32_t multiple)
+{
+    // Compute the pointer modulo the given alignment boundary
+    uint32_t rem = ((uint32_t)(uintptr_t)ptr) % multiple;
+
+    // If the pointer is already aligned, stop
+    if (rem == 0)
+        return ptr;
+
+    // Pad the pointer by the necessary amount to align it
+    uint32_t pad = multiple - rem;
+
+    return ptr + pad;
+}
+
 // Allocate a block of executable memory
 uint8_t* alloc_exec_mem(uint32_t mem_size)
 {
 #ifndef _WIN32
-    // Map the memory as executable
-    uint8_t* mem_block = (uint8_t*)mmap(
-        (void*)&alloc_exec_mem,
-        mem_size,
-        PROT_READ | PROT_WRITE | PROT_EXEC,
-        MAP_PRIVATE | MAP_ANONYMOUS,
-        -1,
-        0
-    );
+    uint8_t* mem_block;
 
+    // On Linux
+    #ifdef MAP_FIXED_NOREPLACE
+        // Align the requested address to page size
+        uint8_t* map_addr = align_ptr((uint8_t*)&alloc_exec_mem, 64 * 1024);
+
+        while (map_addr < (uint8_t*)&alloc_exec_mem + INT32_MAX)
+        {
+            // Try to map a chunk of memory as executable
+            mem_block = (uint8_t*)mmap(
+                (void*)map_addr,
+                mem_size,
+                PROT_READ | PROT_WRITE | PROT_EXEC,
+                MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
+                -1,
+                0
+            );
+
+            if (mem_block != MAP_FAILED) {
+                break;
+            }
+
+            // +4MB
+            map_addr += 4 * 1024 * 1024;
+        }
+    // On MacOS and other platforms
+    #else
+        // Try to map a chunk of memory as executable
+        mem_block = (uint8_t*)mmap(
+            (void*)alloc_exec_mem,
+            mem_size,
+            PROT_READ | PROT_WRITE | PROT_EXEC,
+            MAP_PRIVATE | MAP_ANONYMOUS,
+            -1,
+            0
+        );
+    #endif
+
+    // Fallback
     if (mem_block == MAP_FAILED) {
         mem_block = (uint8_t*)mmap(
             NULL, // try again without the address hint (e.g., valgrind)
@@ -182,15 +228,11 @@ void cb_align_pos(codeblock_t* cb, uint32_t multiple)
 {
     // Compute the pointer modulo the given alignment boundary
     uint8_t* ptr = &cb->mem_block[cb->write_pos];
-    uint32_t rem = ((uint32_t)(uintptr_t)ptr) % multiple;
-
-    // If the pointer is already aligned, stop
-    if (rem == 0)
-        return;
+    uint8_t* aligned_ptr = align_ptr(ptr, multiple);
 
     // Pad the pointer by the necessary amount to align it
-    uint32_t pad = multiple - rem;
-    cb->write_pos += pad;
+    ptrdiff_t pad = aligned_ptr - ptr;
+    cb->write_pos += (int32_t)pad;
 }
 
 // Set the current write position
