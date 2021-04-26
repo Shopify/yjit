@@ -128,11 +128,7 @@ x86opnd_t const_ptr_opnd(const void *ptr)
 // Allocate a block of executable memory
 uint8_t* alloc_exec_mem(uint32_t mem_size)
 {
-#ifdef _WIN32
-    // Windows not supported for now
-    return NULL;
-#endif
-
+#ifndef _WIN32
     // Map the memory as executable
     uint8_t* mem_block = (uint8_t*)mmap(
         (void*)&alloc_exec_mem,
@@ -176,6 +172,10 @@ uint8_t* alloc_exec_mem(uint32_t mem_size)
     memset(mem_block, 0xCC, mem_size);
 
     return mem_block;
+#else
+    // Windows not supported for now
+    return NULL;
+#endif
 }
 
 // Initialize a code block object
