@@ -2187,7 +2187,7 @@ rb_simple_iseq_p(const rb_iseq_t *iseq)
 	   iseq->body->param.flags.has_block == FALSE;
 }
 
-static bool
+MJIT_STATIC bool
 rb_iseq_only_optparam_p(const rb_iseq_t *iseq)
 {
     return iseq->body->param.flags.has_opt == TRUE &&
