@@ -128,7 +128,11 @@ x86opnd_t const_ptr_opnd(const void *ptr)
 // Allocate a block of executable memory
 uint8_t* alloc_exec_mem(uint32_t mem_size)
 {
-#ifndef _WIN32
+#ifdef _WIN32
+    // Windows not supported for now
+    return NULL;
+#endif
+
     // Map the memory as executable
     uint8_t* mem_block = (uint8_t*)mmap(
         (void*)&alloc_exec_mem,
@@ -156,14 +160,22 @@ uint8_t* alloc_exec_mem(uint32_t mem_size)
         exit(-1);
     }
 
+    // Warn if the executable block is out of the relative
+    // 32-bit jump range away from compiled C code
+    ptrdiff_t start_diff = mem_block - (uint8_t*)&alloc_exec_mem;
+    if (start_diff < INT32_MIN || start_diff > INT32_MAX) {
+        fprintf(stderr, "WARNING: start of executable block past 32-bit offset from C code\n");
+    }
+    ptrdiff_t end_diff = (mem_block + mem_size) - (uint8_t*)&alloc_exec_mem;
+    if (end_diff < INT32_MIN || end_diff > INT32_MAX) {
+        fprintf(stderr, "WARNING: end of executable block past 32-bit offset from C code\n");
+    }
+
     // Fill the executable memory with INT3 (0xCC) so that
     // executing uninitialized memory will fault
     memset(mem_block, 0xCC, mem_size);
 
     return mem_block;
-#else
-    return NULL;
-#endif
 }
 
 // Initialize a code block object
