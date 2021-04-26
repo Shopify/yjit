@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <assert.h>
 
 #ifndef _WIN32
@@ -18,11 +19,11 @@
 uint32_t sig_imm_size(int64_t imm)
 {
     // Compute the smallest size this immediate fits in
-    if (imm >= -128 && imm <= 127)
+    if (imm >= INT8_MIN && imm <= INT8_MAX)
         return 8;
-    if (imm >= -32768 && imm <= 32767)
+    if (imm >= INT16_MIN && imm <= INT16_MAX)
         return 16;
-    if (imm >= -2147483648 && imm <= 2147483647)
+    if (imm >= INT32_MIN && imm <= INT32_MAX)
         return 32;
 
     return 64;
@@ -32,11 +33,11 @@ uint32_t sig_imm_size(int64_t imm)
 uint32_t unsig_imm_size(uint64_t imm)
 {
     // Compute the smallest size this immediate fits in
-    if (imm <= 255)
+    if (imm <= UINT8_MAX)
         return 8;
-    else if (imm <= 65535)
+    else if (imm <= UINT16_MAX)
         return 16;
-    else if (imm <= 4294967295)
+    else if (imm <= UINT32_MAX)
         return 32;
 
     return 64;
@@ -818,7 +819,7 @@ void cb_write_jcc_ptr(codeblock_t* cb, const char* mnem, uint8_t op0, uint8_t op
 
     // Compute the jump offset
     int64_t rel64 = (int64_t)(dst_ptr - end_ptr);
-    assert (rel64 >= -2147483648 && rel64 <= 2147483647);
+    assert (rel64 >= INT32_MIN && rel64 <= INT32_MAX);
 
     // Write the relative 32-bit jump offset
     cb_write_int(cb, (int32_t)rel64, 32);
@@ -901,7 +902,7 @@ void call_ptr(codeblock_t* cb, x86opnd_t scratch_reg, uint8_t* dst_ptr)
     int64_t rel64 = (int64_t)(dst_ptr - end_ptr);
 
     // If the offset fits in 32-bit
-    if (rel64 >= -2147483648 && rel64 <= 2147483647)
+    if (rel64 >= INT32_MIN && rel64 <= INT32_MAX)
     {
         call_rel32(cb, (int32_t)rel64);
         return;
