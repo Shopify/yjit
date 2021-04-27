@@ -127,7 +127,7 @@ x86opnd_t const_ptr_opnd(const void *ptr)
 }
 
 // Align the current write position to a multiple of bytes
-uint8_t* align_ptr(uint8_t* ptr, uint32_t multiple)
+static uint8_t* align_ptr(uint8_t* ptr, uint32_t multiple)
 {
     // Compute the pointer modulo the given alignment boundary
     uint32_t rem = ((uint32_t)(uintptr_t)ptr) % multiple;
