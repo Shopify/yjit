@@ -8,8 +8,9 @@
 #include <stdint.h>
 #include <assert.h>
 
+// For mmapp(), sysconf()
 #ifndef _WIN32
-// For mmapp()
+#include <unistd.h>
 #include <sys/mman.h>
 #endif
 
@@ -148,15 +149,16 @@ uint8_t* alloc_exec_mem(uint32_t mem_size)
     uint8_t* mem_block;
 
     // On Linux
-    #ifdef MAP_FIXED_NOREPLACE
+    #if defined(MAP_FIXED_NOREPLACE) && defined(_SC_PAGESIZE)
         // Align the requested address to page size
-        uint8_t* map_addr = align_ptr((uint8_t*)&alloc_exec_mem, 64 * 1024);
+        uint32_t page_size = (uint32_t)sysconf(_SC_PAGESIZE);
+        uint8_t* req_addr = align_ptr((uint8_t*)&alloc_exec_mem, page_size);
 
-        while (map_addr < (uint8_t*)&alloc_exec_mem + INT32_MAX)
+        while (req_addr < (uint8_t*)&alloc_exec_mem + INT32_MAX)
         {
             // Try to map a chunk of memory as executable
             mem_block = (uint8_t*)mmap(
-                (void*)map_addr,
+                (void*)req_addr,
                 mem_size,
                 PROT_READ | PROT_WRITE | PROT_EXEC,
                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
@@ -164,13 +166,15 @@ uint8_t* alloc_exec_mem(uint32_t mem_size)
                 0
             );
 
+            // If we succeeded, stop
             if (mem_block != MAP_FAILED) {
                 break;
             }
 
             // +4MB
-            map_addr += 4 * 1024 * 1024;
+            req_addr += 4 * 1024 * 1024;
         }
+
     // On MacOS and other platforms
     #else
         // Try to map a chunk of memory as executable
@@ -186,8 +190,9 @@ uint8_t* alloc_exec_mem(uint32_t mem_size)
 
     // Fallback
     if (mem_block == MAP_FAILED) {
+        // Try again without the address hint (e.g., valgrind)
         mem_block = (uint8_t*)mmap(
-            NULL, // try again without the address hint (e.g., valgrind)
+            NULL,
             mem_size,
             PROT_READ | PROT_WRITE | PROT_EXEC,
             MAP_PRIVATE | MAP_ANONYMOUS,
