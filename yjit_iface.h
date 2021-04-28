@@ -39,6 +39,7 @@ YJIT_DECLARE_COUNTERS(
     oswb_cfunc_toomany_args,
     oswb_iseq_tailcall,
     oswb_iseq_arity_error,
+    oswb_iseq_only_keywords,
     oswb_iseq_complex_callee,
     oswb_not_implemented_method,
     oswb_getter_arity,

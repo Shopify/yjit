@@ -1772,9 +1772,6 @@ gen_oswb_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
     return YJIT_END_BLOCK;
 }
 
-bool rb_simple_iseq_p(const rb_iseq_t *iseq);
-bool rb_iseq_only_optparam_p(const rb_iseq_t *iseq);
-
 static void
 gen_return_branch(codeblock_t* cb, uint8_t* target0, uint8_t* target1, uint8_t shape)
 {
@@ -1791,6 +1788,10 @@ gen_return_branch(codeblock_t* cb, uint8_t* target0, uint8_t* target1, uint8_t s
         break;
     }
 }
+
+bool rb_simple_iseq_p(const rb_iseq_t *iseq);
+bool rb_iseq_only_optparam_p(const rb_iseq_t *iseq);
+bool rb_iseq_only_kwparam_p(const rb_iseq_t *iseq);
 
 static codegen_status_t
 gen_oswb_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const rb_callable_method_entry_t *cme, const int32_t argc)
@@ -1831,6 +1832,11 @@ gen_oswb_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
 
         num_params -= opt_num - opts_filled;
         start_pc_offset = (uint32_t)iseq->body->param.opt_table[opts_filled];
+    }
+    else if (rb_iseq_only_kwparam_p(iseq)) {
+        // vm_callee_setup_arg() has a fast path for this.
+        GEN_COUNTER_INC(cb, oswb_iseq_only_keywords);
+        return YJIT_CANT_COMPILE;
     }
     else {
         // Only handle iseqs that have simple parameter setup.
