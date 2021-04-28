@@ -1813,22 +1813,24 @@ gen_oswb_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
         }
     }
     else if (rb_iseq_only_optparam_p(iseq)) {
+        // These are iseqs with 0 or more required parameters followed by 1
+        // or more optional parameters.
         // We follow the logic of vm_call_iseq_setup_normal_opt_start()
         // and these are the preconditions required for using that fast path.
         RUBY_ASSERT(vm_ci_markable(ci) && ((vm_ci_flag(ci) &
                         (VM_CALL_KW_SPLAT | VM_CALL_KWARG | VM_CALL_ARGS_SPLAT)) == 0));
 
-        const int lead_num = iseq->body->param.lead_num;
-        const int opt = argc - lead_num;
+        const int required_num = iseq->body->param.lead_num;
+        const int opts_filled = argc - required_num;
         const int opt_num = iseq->body->param.opt_num;
 
-        if (opt < 0 || opt > opt_num) {
+        if (opts_filled < 0 || opts_filled > opt_num) {
             GEN_COUNTER_INC(cb, oswb_iseq_arity_error);
             return YJIT_CANT_COMPILE;
         }
 
-        num_params -= opt_num - opt;
-        start_pc_offset = (uint32_t)iseq->body->param.opt_table[opt];
+        num_params -= opt_num - opts_filled;
+        start_pc_offset = (uint32_t)iseq->body->param.opt_table[opts_filled];
     }
     else {
         // Only handle iseqs that have simple parameter setup.
