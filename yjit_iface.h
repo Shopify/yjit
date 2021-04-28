@@ -48,6 +48,8 @@ YJIT_DECLARE_COUNTERS(
     oswb_se_cc_klass_differ,
     oswb_se_protected_check_failed,
 
+    send_pass_block_to_weird_callee,
+
     leave_se_finish_frame,
     leave_se_interrupt,
     leave_interp_return,

@@ -45,7 +45,7 @@ jit_print_loc(jitstate_t* jit, const char* msg)
 static int
 jit_get_opcode(jitstate_t* jit)
 {
-    return yjit_opcode_at_pc(jit->iseq, jit->pc);
+    return jit->opcode;
 }
 
 // Get the index of the next instruction
@@ -361,11 +361,9 @@ yjit_gen_block(block_t *block, rb_execution_context_t *ec)
 
     // Initialize a JIT state object
     jitstate_t jit = {
-        block,
-        iseq,
-        0,
-        0,
-        ec
+        .block = block,
+        .iseq = iseq,
+        .ec = ec
     };
 
     // Mark the start position of the block
@@ -388,6 +386,7 @@ yjit_gen_block(block_t *block, rb_execution_context_t *ec)
         // Set the current instruction
         jit.insn_idx = insn_idx;
         jit.pc = pc;
+        jit.opcode = opcode;
 
         // Lookup the codegen function for this instruction
         codegen_fn gen_fn = gen_fns[opcode];
@@ -1633,7 +1632,7 @@ gen_oswb_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
     x86opnd_t recv = ctx_stack_opnd(ctx, argc);
 
     // Store incremented PC into current control frame in case callee raises.
-    mov(cb, REG0, const_ptr_opnd(jit->pc + insn_len(BIN(opt_send_without_block))));
+    mov(cb, REG0, const_ptr_opnd(jit->pc + insn_len(jit->opcode)));
     mov(cb, mem_opnd(64, REG_CFP, offsetof(rb_control_frame_t, pc)), REG0);
 
     // If this function needs a Ruby stack frame
@@ -1794,7 +1793,7 @@ bool rb_iseq_only_optparam_p(const rb_iseq_t *iseq);
 bool rb_iseq_only_kwparam_p(const rb_iseq_t *iseq);
 
 static codegen_status_t
-gen_oswb_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const rb_callable_method_entry_t *cme, const int32_t argc)
+gen_oswb_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const rb_callable_method_entry_t *cme, rb_iseq_t *block, const int32_t argc)
 {
     const rb_iseq_t *iseq = def_iseq_ptr(cme->def);
 
@@ -1852,10 +1851,17 @@ gen_oswb_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
     const int num_locals = iseq->body->local_table_size - num_params;
 
     // Create a size-exit to fall back to the interpreter
-    uint8_t* side_exit = yjit_side_exit(jit, ctx);
+    uint8_t *side_exit = yjit_side_exit(jit, ctx);
 
     // Check for interrupts
     yjit_check_ints(cb, side_exit);
+
+    // Stack overflow check
+    // #define CHECK_VM_STACK_OVERFLOW0(cfp, sp, margin)
+    ADD_COMMENT(cb, "stack overflow check");
+    lea(cb, REG0, ctx_sp_opnd(ctx, sizeof(VALUE) * (num_locals + iseq->body->stack_max) + sizeof(rb_control_frame_t)));
+    cmp(cb, REG_CFP, REG0);
+    jle_ptr(cb, COUNTED_EXIT(side_exit, oswb_se_cf_overflow));
 
     // Points to the receiver operand on the stack
     x86opnd_t recv = ctx_stack_opnd(ctx, argc);
@@ -1865,15 +1871,16 @@ gen_oswb_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
     mov(cb, member_opnd(REG_CFP, rb_control_frame_t, sp), REG0);
 
     // Store the next PC in the current frame
-    mov(cb, REG0, const_ptr_opnd(jit->pc + insn_len(BIN(opt_send_without_block))));
+    mov(cb, REG0, const_ptr_opnd(jit->pc + insn_len(jit->opcode)));
     mov(cb, mem_opnd(64, REG_CFP, offsetof(rb_control_frame_t, pc)), REG0);
 
-    // Stack overflow check
-    // #define CHECK_VM_STACK_OVERFLOW0(cfp, sp, margin)
-    ADD_COMMENT(cb, "stack overflow check");
-    lea(cb, REG0, ctx_sp_opnd(ctx, sizeof(VALUE) * (num_locals + iseq->body->stack_max) + sizeof(rb_control_frame_t)));
-    cmp(cb, REG_CFP, REG0);
-    jle_ptr(cb, COUNTED_EXIT(side_exit, oswb_se_cf_overflow));
+    if (block) {
+        // Change cfp->block_code in the current frame. See vm_caller_setup_arg_block().
+        // VM_CFP_TO_CAPTURED_BLCOK does &cfp->self, rb_captured_block->code.iseq alias
+        // when cfp->block_code.
+        jit_mov_gc_ptr(jit, cb, REG0, (VALUE)block);
+        mov(cb, member_opnd(REG_CFP, rb_control_frame_t, block_code), REG0);
+    }
 
     // Adjust the callee's stack pointer
     lea(cb, REG0, ctx_sp_opnd(ctx, sizeof(VALUE) * (3 + num_locals)));
@@ -1892,7 +1899,15 @@ gen_oswb_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
 
     // Write block handler at sp[-2]
     // sp[-2] = block_handler;
-    mov(cb, mem_opnd(64, REG0, 8 * -2), imm_opnd(VM_BLOCK_HANDLER_NONE));
+    if (block) {
+        // reg1 = VM_BH_FROM_ISEQ_BLOCK(VM_CFP_TO_CAPTURED_BLOCK(reg_cfp));
+        lea(cb, REG1, member_opnd(REG_CFP, rb_control_frame_t, self));
+        or(cb, REG1, imm_opnd(1));
+        mov(cb, mem_opnd(64, REG0, 8 * -2), REG1);
+    }
+    else {
+        mov(cb, mem_opnd(64, REG0, 8 * -2), imm_opnd(VM_BLOCK_HANDLER_NONE));
+    }
 
     // Write env flags at sp[-1]
     // sp[-1] = frame_type;
@@ -1975,7 +1990,7 @@ gen_oswb_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
 }
 
 static codegen_status_t
-gen_opt_send_without_block(jitstate_t* jit, ctx_t* ctx)
+gen_send_general(jitstate_t *jit, ctx_t *ctx, struct rb_call_data *cd, rb_iseq_t *block)
 {
     // Relevant definitions:
     // rb_execution_context_t       : vm_core.h
@@ -1987,7 +2002,6 @@ gen_opt_send_without_block(jitstate_t* jit, ctx_t* ctx)
     // For a general overview for how the interpreter calls methods,
     // see vm_call_method().
 
-    struct rb_call_data *cd = (struct rb_call_data *)jit_get_arg(jit, 0);
     const struct rb_callinfo *ci = cd->ci; // info about the call site
 
     int32_t argc = (int32_t)vm_ci_argc(ci);
@@ -2000,7 +2014,8 @@ gen_opt_send_without_block(jitstate_t* jit, ctx_t* ctx)
     }
 
     // Don't JIT calls that aren't simple
-    if (!(vm_ci_flag(ci) & VM_CALL_ARGS_SIMPLE)) {
+    // Note, not using VM_CALL_ARGS_SIMPLE because sometimes we pass a block.
+    if ((vm_ci_flag(ci) & (VM_CALL_KW_SPLAT | VM_CALL_KWARG | VM_CALL_ARGS_SPLAT | VM_CALL_ARGS_BLOCKARG)) != 0) {
         GEN_COUNTER_INC(cb, oswb_callsite_not_simple);
         return YJIT_CANT_COMPILE;
     }
@@ -2032,6 +2047,11 @@ gen_opt_send_without_block(jitstate_t* jit, ctx_t* ctx)
         return YJIT_CANT_COMPILE;
     }
 
+    if (block && cme->def->type != VM_METHOD_TYPE_ISEQ) {
+        GEN_COUNTER_INC(cb, send_pass_block_to_weird_callee);
+        return YJIT_CANT_COMPILE;
+    }
+
     switch (METHOD_ENTRY_VISI(cme)) {
     case METHOD_VISI_PUBLIC:
         // Can always call public methods
@@ -2060,7 +2080,7 @@ gen_opt_send_without_block(jitstate_t* jit, ctx_t* ctx)
 
     switch (cme->def->type) {
     case VM_METHOD_TYPE_ISEQ:
-        return gen_oswb_iseq(jit, ctx, ci, cme, argc);
+        return gen_oswb_iseq(jit, ctx, ci, cme, block, argc);
     case VM_METHOD_TYPE_CFUNC:
         return gen_oswb_cfunc(jit, ctx, ci, cme, argc);
     case VM_METHOD_TYPE_IVAR:
@@ -2106,6 +2126,21 @@ gen_opt_send_without_block(jitstate_t* jit, ctx_t* ctx)
     }
 
     return YJIT_CANT_COMPILE;
+}
+
+static codegen_status_t
+gen_opt_send_without_block(jitstate_t *jit, ctx_t *ctx)
+{
+    struct rb_call_data *cd = (struct rb_call_data *)jit_get_arg(jit, 0);
+    return gen_send_general(jit, ctx, cd, NULL);
+}
+
+static codegen_status_t
+gen_send(jitstate_t *jit, ctx_t *ctx)
+{
+    struct rb_call_data *cd = (struct rb_call_data *)jit_get_arg(jit, 0);
+    rb_iseq_t *block = (rb_iseq_t *)jit_get_arg(jit, 1);
+    return gen_send_general(jit, ctx, cd, block);
 }
 
 static codegen_status_t
@@ -2246,5 +2281,6 @@ yjit_init_codegen(void)
     yjit_reg_op(BIN(branchunless), gen_branchunless);
     yjit_reg_op(BIN(jump), gen_jump);
     yjit_reg_op(BIN(opt_send_without_block), gen_opt_send_without_block);
+    yjit_reg_op(BIN(send), gen_send);
     yjit_reg_op(BIN(leave), gen_leave);
 }

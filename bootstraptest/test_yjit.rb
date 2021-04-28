@@ -772,3 +772,17 @@ assert_equal 'raised', %q{
     :raised
   end
 }
+
+# test send with a block
+assert_equal '[1, 2, 42]', %q{
+def thing(a, b)
+  [a, b, yield]
+end
+
+def use
+  thing(1,2) { 42 }
+end
+
+use
+use
+}
