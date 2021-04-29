@@ -529,10 +529,68 @@ def dump_bits(target, result, page, object_address, end = "\n"):
         check_bits(page, "wb_unprotected_bits", bitmap_index, bitmap_bit, "U"),
         ), end=end, file=result)
 
-def dump_page(debugger, command, result, internal_dict):
+class HeapPageIter:
+    def __init__(self, page, target):
+        self.page = page
+        self.target = target
+        self.start = page.GetChildMemberWithName('start').GetValueAsUnsigned();
+        self.num_slots = page.GetChildMemberWithName('total_slots').unsigned
+        self.counter = 0
+        self.tRBasic = target.FindFirstType("struct RBasic")
+        self.tRValue = target.FindFirstType("struct RVALUE")
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.counter < self.num_slots:
+            obj_addr_i = self.start + (self.counter * self.tRValue.GetByteSize())
+            obj_addr = lldb.SBAddress(obj_addr_i, self.target)
+            slot_info = (self.counter, obj_addr_i, self.target.CreateValueFromAddress("object", obj_addr, self.tRBasic))
+            self.counter += 1
+
+            return slot_info
+        else:
+            raise StopIteration
+
+
+def dump_page_internal(page, target, process, thread, frame, result, debugger, highlight=None):
     if not ('RUBY_Qfalse' in globals()):
         lldb_init(debugger)
 
+    ruby_type_map = ruby_types(debugger)
+
+    freelist = []
+    fl_start = page.GetChildMemberWithName('freelist').GetValueAsUnsigned()
+    tRVALUE = target.FindFirstType("struct RVALUE")
+
+    while fl_start > 0:
+        freelist.append(fl_start)
+        obj_addr = lldb.SBAddress(fl_start, target)
+        obj = target.CreateValueFromAddress("object", obj_addr, tRVALUE)
+        fl_start = obj.GetChildMemberWithName("as").GetChildMemberWithName("free").GetChildMemberWithName("next").GetValueAsUnsigned()
+
+    for (page_index, obj_addr, obj) in HeapPageIter(page, target):
+        dump_bits(target, result, page, obj_addr, end= " ")
+        flags = obj.GetChildMemberWithName('flags').GetValueAsUnsigned()
+        flType = flags & RUBY_T_MASK
+
+        flidx = '   '
+        if flType == RUBY_T_NONE:
+            try:
+                flidx = "%3d" % freelist.index(obj_addr)
+            except ValueError:
+                flidx = '   '
+
+        result_str = "%s idx: [%3d] freelist_idx: {%s} Addr: %0#x (flags: %0#x)" % (rb_type(flags, ruby_type_map), page_index, flidx, obj_addr, flags)
+
+        if highlight == obj_addr:
+            result_str = ' '.join([result_str, "<<<<<"])
+
+        print(result_str, file=result)
+
+
+def dump_page(debugger, command, result, internal_dict):
     target = debugger.GetSelectedTarget()
     process = target.GetProcess()
     thread = process.GetSelectedThread()
@@ -542,21 +600,23 @@ def dump_page(debugger, command, result, internal_dict):
     page = frame.EvaluateExpression(command)
     page = page.Cast(tHeapPageP)
 
-    tRBasic = target.FindFirstType("struct RBasic")
-    tRValue = target.FindFirstType("struct RVALUE")
+    dump_page_internal(page, target, process, thread, frame, result, debugger)
 
-    obj_address = page.GetChildMemberWithName('start').GetValueAsUnsigned();
-    num_slots = page.GetChildMemberWithName('total_slots').unsigned
 
-    ruby_type_map = ruby_types(debugger)
+def dump_page_rvalue(debugger, command, result, internal_dict):
+    target = debugger.GetSelectedTarget()
+    process = target.GetProcess()
+    thread = process.GetSelectedThread()
+    frame = thread.GetSelectedFrame()
 
-    for j in range(0, num_slots):
-        offset = obj_address + (j * tRValue.GetByteSize())
-        obj_addr = lldb.SBAddress(offset, target)
-        p = target.CreateValueFromAddress("object", obj_addr, tRBasic)
-        dump_bits(target, result, page, offset, end = " ")
-        flags = p.GetChildMemberWithName('flags').GetValueAsUnsigned()
-        print("%s [%3d]: Addr: %0#x (flags: %0#x)" % (rb_type(flags, ruby_type_map), j, offset, flags), file=result)
+    val = frame.EvaluateExpression(command)
+    page = get_page(lldb, target, val)
+    page_type = target.FindFirstType("struct heap_page").GetPointerType()
+    page.Cast(page_type)
+
+    dump_page_internal(page, target, process, thread, frame, result, debugger, highlight=val.GetValueAsUnsigned())
+
+
 
 def rb_type(flags, ruby_types):
     flType = flags & RUBY_T_MASK
@@ -588,6 +648,7 @@ def __lldb_init_module(debugger, internal_dict):
     debugger.HandleCommand("command script add -f lldb_cruby.heap_page_body heap_page_body")
     debugger.HandleCommand("command script add -f lldb_cruby.rb_backtrace rbbt")
     debugger.HandleCommand("command script add -f lldb_cruby.dump_page dump_page")
+    debugger.HandleCommand("command script add -f lldb_cruby.dump_page_rvalue dump_page_rvalue")
 
     lldb_init(debugger)
     print("lldb scripts for ruby has been installed.")
