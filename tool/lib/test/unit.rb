@@ -9,6 +9,7 @@ require_relative '../envutil'
 require_relative '../colorize'
 require 'test/unit/testcase'
 require 'optparse'
+require 'timeout'
 
 # See Test::Unit
 module Test
@@ -1281,7 +1282,9 @@ class MiniTest::Unit::TestCase # :nodoc: all
   RUN_TEST_TRACE = "#{__FILE__}:#{__LINE__+3}:in `run_test'".freeze
   def run_test(name)
     progname, $0 = $0, "#{$0}: #{self.class}##{name}"
-    self.__send__(name)
+    Timeout.timeout(5 * 60) do # To catch hanging tests
+      self.__send__(name)
+    end
   ensure
     $@.delete(RUN_TEST_TRACE) if $@
     $0 = progname
