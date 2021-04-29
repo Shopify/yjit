@@ -43,7 +43,6 @@ YJIT_DECLARE_COUNTERS(
     send_iseq_complex_callee,
     send_not_implemented_method,
     send_getter_arity,
-    send_pass_block_to_non_iseq,
     send_se_receiver_not_heap,
     send_se_cf_overflow,
     send_se_cc_klass_differ,
