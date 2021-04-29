@@ -531,6 +531,15 @@ gen_pop(jitstate_t* jit, ctx_t* ctx)
     return YJIT_KEEP_COMPILING;
 }
 
+// Pop n values off the stack
+static codegen_status_t
+gen_adjuststack(jitstate_t* jit, ctx_t* ctx)
+{
+    rb_num_t n = (rb_num_t)jit_get_arg(jit, 0);
+    ctx_stack_pop(ctx, n);
+    return YJIT_KEEP_COMPILING;
+}
+
 static codegen_status_t
 gen_putnil(jitstate_t* jit, ctx_t* ctx)
 {
@@ -2290,6 +2299,7 @@ yjit_init_codegen(void)
     yjit_reg_op(BIN(dupn), gen_dupn);
     yjit_reg_op(BIN(setn), gen_setn);
     yjit_reg_op(BIN(pop), gen_pop);
+    yjit_reg_op(BIN(adjuststack), gen_adjuststack);
     yjit_reg_op(BIN(putnil), gen_putnil);
     yjit_reg_op(BIN(putobject), gen_putobject);
     yjit_reg_op(BIN(putobject_INT2FIX_0_), gen_putobject_int2fix);
