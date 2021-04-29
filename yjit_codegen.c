@@ -1773,10 +1773,13 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
     // Pop the C function arguments from the stack (in the caller)
     ctx_stack_pop(ctx, argc + 1);
 
-    // Write interpreter SP into CFP
-    lea(cb, REG_SP, ctx_sp_opnd(ctx, 0));
-    mov(cb, member_opnd(REG_CFP, rb_control_frame_t, sp), REG_SP);
-    ctx->sp_offset = 0;
+    if (block) {
+        // Write interpreter SP into CFP.
+        // Needed in case the callee yields to the block.
+        lea(cb, REG_SP, ctx_sp_opnd(ctx, 0));
+        mov(cb, member_opnd(REG_CFP, rb_control_frame_t, sp), REG_SP);
+        ctx->sp_offset = 0;
+    }
 
     // Save YJIT registers
     yjit_save_regs(cb);
@@ -1823,6 +1826,10 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
             imm_opnd(sizeof(rb_control_frame_t))
         );
     }
+
+    // Note: gen_oswb_iseq() jumps to the next instruction with ctx->sp_offset == 0
+    // after the call, while this does not. This difference prevents
+    // the two call types from sharing the same successor.
 
     // Jump (fall through) to the call continuation block
     // We do this to end the current block after the call
