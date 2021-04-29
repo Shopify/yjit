@@ -1314,6 +1314,9 @@ module MiniTest
 
         begin
           @passed = nil
+          if defined?(on_parallel_worker?) && on_parallel_worker?
+            runner.before_test_start(self.class, self.__name__)
+          end
           self.before_setup
           self.setup
           self.after_setup
