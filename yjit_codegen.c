@@ -1651,6 +1651,11 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
         return YJIT_CANT_COMPILE;
     }
 
+    if (block) {
+        // FIXME: currently fails to boot make test-all.
+        return YJIT_CANT_COMPILE;
+    }
+
     // Callee method ID
     //ID mid = vm_ci_mid(ci);
     //printf("JITting call to C function \"%s\", argc: %lu\n", rb_id2name(mid), argc);
@@ -1714,8 +1719,6 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
             mov(cb, mem_opnd(64, REG0, 8 * -2), REG1);
         }
         else {
-            // Write block handler at sp[-2]
-            // sp[-2] = block_handler;
             mov(cb, mem_opnd(64, REG0, 8 * -2), imm_opnd(VM_BLOCK_HANDLER_NONE));
         }
 
