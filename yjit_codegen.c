@@ -909,8 +909,8 @@ gen_get_ivar(jitstate_t *jit, ctx_t *ctx, const int max_chain_depth, VALUE compt
         // VALUE rb_ivar_get(VALUE obj, ID id)
         ADD_COMMENT(cb, "call rb_ivar_get()");
         yjit_save_regs(cb);
-        mov(cb, RDI, REG0);
-        mov(cb, RSI, imm_opnd((int64_t)ivar_name));
+        mov(cb, C_ARG_REGS[0], REG0);
+        mov(cb, C_ARG_REGS[1], imm_opnd((int64_t)ivar_name));
         call_ptr(cb, REG1, (void *)rb_ivar_get);
         yjit_load_regs(cb);
 
