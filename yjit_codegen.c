@@ -1629,7 +1629,7 @@ jit_protected_callee_ancestry_guard(jitstate_t *jit, codeblock_t *cb, const rb_c
 }
 
 static codegen_status_t
-gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const rb_callable_method_entry_t *cme, rb_iseq_t *block, int32_t argc)
+gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const rb_callable_method_entry_t *cme, rb_iseq_t *block, const int32_t argc)
 {
     const rb_method_cfunc_t *cfunc = UNALIGNED_MEMBER_PTR(cme->def, body.cfunc);
 
@@ -1648,11 +1648,6 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
     // Don't JIT functions that need C stack arguments for now
     if (argc + 1 > NUM_C_ARG_REGS) {
         GEN_COUNTER_INC(cb, send_cfunc_toomany_args);
-        return YJIT_CANT_COMPILE;
-    }
-
-    if (block) {
-        // FIXME: currently fails to boot make test-all.
         return YJIT_CANT_COMPILE;
     }
 
@@ -1693,8 +1688,8 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
     if (push_frame) {
         if (block) {
             // Change cfp->block_code in the current frame. See vm_caller_setup_arg_block().
-            // VM_CFP_TO_CAPTURED_BLCOK does &cfp->self, rb_captured_block->code.iseq alias
-            // when cfp->block_code.
+            // VM_CFP_TO_CAPTURED_BLCOK does &cfp->self, rb_captured_block->code.iseq aliases
+            // with cfp->block_code.
             jit_mov_gc_ptr(jit, cb, REG0, (VALUE)block);
             mov(cb, member_opnd(REG_CFP, rb_control_frame_t, block_code), REG0);
         }
@@ -1772,11 +1767,19 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
         yjit_load_regs(cb);
     }
 
-    // Save YJIT registers
-    yjit_save_regs(cb);
-
     // Copy SP into RAX because REG_SP will get overwritten
     lea(cb, RAX, ctx_sp_opnd(ctx, 0));
+
+    // Pop the C function arguments from the stack (in the caller)
+    ctx_stack_pop(ctx, argc + 1);
+
+    // Write interpreter SP into CFP
+    lea(cb, REG_SP, ctx_sp_opnd(ctx, 0));
+    mov(cb, member_opnd(REG_CFP, rb_control_frame_t, sp), REG_SP);
+    ctx->sp_offset = 0;
+
+    // Save YJIT registers
+    yjit_save_regs(cb);
 
     // Non-variadic method
     if (cfunc->argc >= 0) {
@@ -1797,9 +1800,6 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
         lea(cb, C_ARG_REGS[1], mem_opnd(64, RAX, -(argc) * SIZEOF_VALUE));
         mov(cb, C_ARG_REGS[2], mem_opnd(64, RAX, -(argc + 1) * SIZEOF_VALUE));
     }
-
-    // Pop the C function arguments from the stack (in the caller)
-    ctx_stack_pop(ctx, argc + 1);
 
     // Call the C function
     // VALUE ret = (cfunc->func)(recv, argv[0], argv[1]);
@@ -1823,10 +1823,6 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
             imm_opnd(sizeof(rb_control_frame_t))
         );
     }
-
-    // TODO: gen_send_iseq() jumps to the next instruction with ctx->sp_offset == 0
-    // after the call, while this does not. This difference prevents
-    // the two call types from sharing the same successor.
 
     // Jump (fall through) to the call continuation block
     // We do this to end the current block after the call
@@ -1939,8 +1935,8 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
 
     if (block) {
         // Change cfp->block_code in the current frame. See vm_caller_setup_arg_block().
-        // VM_CFP_TO_CAPTURED_BLCOK does &cfp->self, rb_captured_block->code.iseq alias
-        // when cfp->block_code.
+        // VM_CFP_TO_CAPTURED_BLCOK does &cfp->self, rb_captured_block->code.iseq aliases
+        // with cfp->block_code.
         jit_mov_gc_ptr(jit, cb, REG0, (VALUE)block);
         mov(cb, member_opnd(REG_CFP, rb_control_frame_t, block_code), REG0);
     }
