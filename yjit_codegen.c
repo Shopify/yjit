@@ -454,6 +454,13 @@ yjit_gen_block(block_t *block, rb_execution_context_t *ec)
 }
 
 static codegen_status_t
+gen_nop(jitstate_t* jit, ctx_t* ctx)
+{
+    // Do nothing
+    return YJIT_KEEP_COMPILING;
+}
+
+static codegen_status_t
 gen_dup(jitstate_t* jit, ctx_t* ctx)
 {
     // Get the top value and its type
@@ -468,10 +475,22 @@ gen_dup(jitstate_t* jit, ctx_t* ctx)
     return YJIT_KEEP_COMPILING;
 }
 
+// set Nth stack entry to stack top
 static codegen_status_t
-gen_nop(jitstate_t* jit, ctx_t* ctx)
+gen_setn(jitstate_t* jit, ctx_t* ctx)
 {
-    // Do nothing
+    rb_num_t n = (rb_num_t)jit_get_arg(jit, 0);
+
+    // Get the top value and its type
+    val_type_t top_type = ctx_get_opnd_type(ctx, OPND_STACK(0));
+    x86opnd_t top_val = ctx_stack_pop(ctx, 0);
+
+    // Set the destination and its type
+    ctx_set_opnd_type(ctx, OPND_STACK(n), top_type);
+    x86opnd_t dst_opnd = ctx_stack_opnd(ctx, (int32_t)n);
+    mov(cb, REG0, top_val);
+    mov(cb, dst_opnd, REG0);
+
     return YJIT_KEEP_COMPILING;
 }
 
@@ -902,8 +921,27 @@ gen_get_ivar(jitstate_t *jit, ctx_t *ctx, const int max_chain_depth, VALUE compt
     //       Eventually, we can encode whether an object is T_OBJECT or not
     //       inside object shapes.
     if (rb_get_alloc_func(comptime_val_klass) != rb_class_allocate_instance) {
-        GEN_COUNTER_INC(cb, getivar_not_object);
-        return YJIT_CANT_COMPILE;
+        // General case. Call rb_ivar_get(). No need to reconstruct interpreter
+        // state since the routine never raises exceptions or allocate objects
+        // visibile to Ruby.
+        // VALUE rb_ivar_get(VALUE obj, ID id)
+        ADD_COMMENT(cb, "call rb_ivar_get()");
+        yjit_save_regs(cb);
+        mov(cb, C_ARG_REGS[0], REG0);
+        mov(cb, C_ARG_REGS[1], imm_opnd((int64_t)ivar_name));
+        call_ptr(cb, REG1, (void *)rb_ivar_get);
+        yjit_load_regs(cb);
+
+        if (!reg0_opnd.is_self) {
+            (void)ctx_stack_pop(ctx, 1);
+        }
+        // Push the ivar on the stack
+        x86opnd_t out_opnd = ctx_stack_push(ctx, TYPE_UNKNOWN);
+        mov(cb, out_opnd, RAX);
+
+        // Jump to next instruction. This allows guard chains to share the same successor.
+        jit_jump_to_next_insn(jit, ctx);
+        return YJIT_END_BLOCK;
     }
     RUBY_ASSERT(BUILTIN_TYPE(comptime_receiver) == T_OBJECT); // because we checked the allocator
 
@@ -2271,8 +2309,9 @@ yjit_init_codegen(void)
     leave_exit_code = yjit_gen_leave_exit(cb);
 
     // Map YARV opcodes to the corresponding codegen functions
-    yjit_reg_op(BIN(dup), gen_dup);
     yjit_reg_op(BIN(nop), gen_nop);
+    yjit_reg_op(BIN(dup), gen_dup);
+    yjit_reg_op(BIN(setn), gen_setn);
     yjit_reg_op(BIN(pop), gen_pop);
     yjit_reg_op(BIN(putnil), gen_putnil);
     yjit_reg_op(BIN(putobject), gen_putobject);
