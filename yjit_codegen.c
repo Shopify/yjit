@@ -1587,7 +1587,7 @@ jit_protected_callee_ancestry_guard(jitstate_t *jit, codeblock_t *cb, const rb_c
     call_ptr(cb, REG0, (void *)&rb_obj_is_kind_of);
     yjit_load_regs(cb);
     test(cb, RAX, RAX);
-    jz_ptr(cb, COUNTED_EXIT(side_exit, oswb_se_protected_check_failed));
+    jz_ptr(cb, COUNTED_EXIT(side_exit, send_se_protected_check_failed));
 }
 
 static codegen_status_t
@@ -1597,19 +1597,19 @@ gen_oswb_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
 
     // If the function expects a Ruby array of arguments
     if (cfunc->argc < 0 && cfunc->argc != -1) {
-        GEN_COUNTER_INC(cb, oswb_cfunc_ruby_array_varg);
+        GEN_COUNTER_INC(cb, send_cfunc_ruby_array_varg);
         return YJIT_CANT_COMPILE;
     }
 
     // If the argument count doesn't match
     if (cfunc->argc >= 0 && cfunc->argc != argc) {
-        GEN_COUNTER_INC(cb, oswb_cfunc_argc_mismatch);
+        GEN_COUNTER_INC(cb, send_cfunc_argc_mismatch);
         return YJIT_CANT_COMPILE;
     }
 
     // Don't JIT functions that need C stack arguments for now
     if (argc + 1 > NUM_C_ARG_REGS) {
-        GEN_COUNTER_INC(cb, oswb_cfunc_toomany_args);
+        GEN_COUNTER_INC(cb, send_cfunc_toomany_args);
         return YJIT_CANT_COMPILE;
     }
 
@@ -1642,7 +1642,7 @@ gen_oswb_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
         // REG_CFP <= REG_SP + 4 * sizeof(VALUE) + sizeof(rb_control_frame_t)
         lea(cb, REG0, ctx_sp_opnd(ctx, sizeof(VALUE) * 4 + sizeof(rb_control_frame_t)));
         cmp(cb, REG_CFP, REG0);
-        jle_ptr(cb, COUNTED_EXIT(side_exit, oswb_se_cf_overflow));
+        jle_ptr(cb, COUNTED_EXIT(side_exit, send_se_cf_overflow));
 
         // Increment the stack pointer by 3 (in the callee)
         // sp += 3
@@ -1799,7 +1799,7 @@ gen_oswb_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
 
     if (vm_ci_flag(ci) & VM_CALL_TAILCALL) {
         // We can't handle tailcalls
-        GEN_COUNTER_INC(cb, oswb_iseq_tailcall);
+        GEN_COUNTER_INC(cb, send_iseq_tailcall);
         return YJIT_CANT_COMPILE;
     }
 
@@ -1808,7 +1808,7 @@ gen_oswb_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
     uint32_t start_pc_offset = 0;
     if (rb_simple_iseq_p(iseq)) {
         if (num_params != argc) {
-            GEN_COUNTER_INC(cb, oswb_iseq_arity_error);
+            GEN_COUNTER_INC(cb, send_iseq_arity_error);
             return YJIT_CANT_COMPILE;
         }
     }
@@ -1825,7 +1825,7 @@ gen_oswb_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
         const int opt_num = iseq->body->param.opt_num;
 
         if (opts_filled < 0 || opts_filled > opt_num) {
-            GEN_COUNTER_INC(cb, oswb_iseq_arity_error);
+            GEN_COUNTER_INC(cb, send_iseq_arity_error);
             return YJIT_CANT_COMPILE;
         }
 
@@ -1834,13 +1834,13 @@ gen_oswb_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
     }
     else if (rb_iseq_only_kwparam_p(iseq)) {
         // vm_callee_setup_arg() has a fast path for this.
-        GEN_COUNTER_INC(cb, oswb_iseq_only_keywords);
+        GEN_COUNTER_INC(cb, send_iseq_only_keywords);
         return YJIT_CANT_COMPILE;
     }
     else {
         // Only handle iseqs that have simple parameter setup.
         // See vm_callee_setup_arg().
-        GEN_COUNTER_INC(cb, oswb_iseq_complex_callee);
+        GEN_COUNTER_INC(cb, send_iseq_complex_callee);
         return YJIT_CANT_COMPILE;
     }
 
@@ -1861,7 +1861,7 @@ gen_oswb_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
     ADD_COMMENT(cb, "stack overflow check");
     lea(cb, REG0, ctx_sp_opnd(ctx, sizeof(VALUE) * (num_locals + iseq->body->stack_max) + sizeof(rb_control_frame_t)));
     cmp(cb, REG_CFP, REG0);
-    jle_ptr(cb, COUNTED_EXIT(side_exit, oswb_se_cf_overflow));
+    jle_ptr(cb, COUNTED_EXIT(side_exit, send_se_cf_overflow));
 
     // Points to the receiver operand on the stack
     x86opnd_t recv = ctx_stack_opnd(ctx, argc);
@@ -2009,14 +2009,14 @@ gen_send_general(jitstate_t *jit, ctx_t *ctx, struct rb_call_data *cd, rb_iseq_t
 
     // Don't JIT calls with keyword splat
     if (vm_ci_flag(ci) & VM_CALL_KW_SPLAT) {
-        GEN_COUNTER_INC(cb, oswb_kw_splat);
+        GEN_COUNTER_INC(cb, send_kw_splat);
         return YJIT_CANT_COMPILE;
     }
 
     // Don't JIT calls that aren't simple
     // Note, not using VM_CALL_ARGS_SIMPLE because sometimes we pass a block.
     if ((vm_ci_flag(ci) & (VM_CALL_KW_SPLAT | VM_CALL_KWARG | VM_CALL_ARGS_SPLAT | VM_CALL_ARGS_BLOCKARG)) != 0) {
-        GEN_COUNTER_INC(cb, oswb_callsite_not_simple);
+        GEN_COUNTER_INC(cb, send_callsite_not_simple);
         return YJIT_CANT_COMPILE;
     }
 
@@ -2048,7 +2048,7 @@ gen_send_general(jitstate_t *jit, ctx_t *ctx, struct rb_call_data *cd, rb_iseq_t
     }
 
     if (block && cme->def->type != VM_METHOD_TYPE_ISEQ) {
-        GEN_COUNTER_INC(cb, send_pass_block_to_weird_callee);
+        GEN_COUNTER_INC(cb, send_pass_block_to_non_iseq);
         return YJIT_CANT_COMPILE;
     }
 
@@ -2086,7 +2086,7 @@ gen_send_general(jitstate_t *jit, ctx_t *ctx, struct rb_call_data *cd, rb_iseq_t
     case VM_METHOD_TYPE_IVAR:
         if (argc != 0) {
             // Argument count mismatch. Getters take no arguments.
-            GEN_COUNTER_INC(cb, oswb_getter_arity);
+            GEN_COUNTER_INC(cb, send_getter_arity);
             return YJIT_CANT_COMPILE;
         }
         else {
@@ -2096,31 +2096,31 @@ gen_send_general(jitstate_t *jit, ctx_t *ctx, struct rb_call_data *cd, rb_iseq_t
             return gen_get_ivar(jit, ctx, OSWB_MAX_DEPTH, comptime_recv, ivar_name, recv_opnd, side_exit);
         }
     case VM_METHOD_TYPE_ATTRSET:
-        GEN_COUNTER_INC(cb, oswb_ivar_set_method);
+        GEN_COUNTER_INC(cb, send_ivar_set_method);
         return YJIT_CANT_COMPILE;
     case VM_METHOD_TYPE_BMETHOD:
-        GEN_COUNTER_INC(cb, oswb_bmethod);
+        GEN_COUNTER_INC(cb, send_bmethod);
         return YJIT_CANT_COMPILE;
     case VM_METHOD_TYPE_ZSUPER:
-        GEN_COUNTER_INC(cb, oswb_zsuper_method);
+        GEN_COUNTER_INC(cb, send_zsuper_method);
         return YJIT_CANT_COMPILE;
     case VM_METHOD_TYPE_ALIAS:
-        GEN_COUNTER_INC(cb, oswb_alias_method);
+        GEN_COUNTER_INC(cb, send_alias_method);
         return YJIT_CANT_COMPILE;
     case VM_METHOD_TYPE_UNDEF:
-        GEN_COUNTER_INC(cb, oswb_undef_method);
+        GEN_COUNTER_INC(cb, send_undef_method);
         return YJIT_CANT_COMPILE;
     case VM_METHOD_TYPE_NOTIMPLEMENTED:
-        GEN_COUNTER_INC(cb, oswb_not_implemented_method);
+        GEN_COUNTER_INC(cb, send_not_implemented_method);
         return YJIT_CANT_COMPILE;
     case VM_METHOD_TYPE_OPTIMIZED:
-        GEN_COUNTER_INC(cb, oswb_optimized_method);
+        GEN_COUNTER_INC(cb, send_optimized_method);
         return YJIT_CANT_COMPILE;
     case VM_METHOD_TYPE_MISSING:
-        GEN_COUNTER_INC(cb, oswb_missing_method);
+        GEN_COUNTER_INC(cb, send_missing_method);
         return YJIT_CANT_COMPILE;
     case VM_METHOD_TYPE_REFINED:
-        GEN_COUNTER_INC(cb, oswb_refined_method);
+        GEN_COUNTER_INC(cb, send_refined_method);
         return YJIT_CANT_COMPILE;
     // no default case so compiler issues a warning if this is not exhaustive
     }
