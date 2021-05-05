@@ -154,16 +154,22 @@ assert_equal '42', %q{
   test
 }
 
-# Method aliasing
-assert_equal '42', %q{
-  class Foo
-    alias foo_tap tap
+# Method aliasing with method from parent class
+assert_equal '777', %q{
+  class A
+    def method_a
+      777
+    end
   end
 
-  @obj = Foo.new
+  class B < A
+    alias method_b method_a
+  end
+
+  @obj = B.new
 
   def test
-    @obj.foo_tap { 42 }
+    @obj.method_b
   end
 
   test
