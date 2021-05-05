@@ -49,6 +49,19 @@ module Test
           end
         end
 
+        # Thread for making sure the parallel worker is not stuck on one test
+        # for too long.
+        @timer_thread = Thread.new do
+          timeout = 8 * 60 # 8 minutes
+          while true
+            slept_for = sleep(timeout)
+            if slept_for >= timeout
+              _report("p", "Spent #{timeout}s running #{@current_test}\n")
+              exit 2
+            end
+          end
+        end
+
         e, f, s = @errors, @failures, @skips
 
         begin
@@ -84,6 +97,7 @@ module Test
         $stdout = orig_stdout if orig_stdout
         o.close if o && !o.closed?
         i.close if i && !i.closed?
+        @timer_thread&.kill
       end
 
       def run(args = []) # :nodoc:
@@ -149,6 +163,16 @@ module Test
           @stdin.close if @stdin
           @stdout.close if @stdout
         end
+      end
+
+      def before_test_start(klass, name)
+        # Used by the timer thread in case the timeout is exceeded
+        @current_test = "#{klass.name}##{name}"
+        # This interrupts the sleep call in the timer thread, starting a new
+        # sleep cycle. If it so happens that the timer thread is not sleeping
+        # at the time of this call, it's about to enter a new sleep cycle
+        # anways.
+        @timer_thread.run
       end
 
       def _report(res, *args) # :nodoc:
