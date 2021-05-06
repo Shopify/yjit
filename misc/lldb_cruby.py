@@ -13,6 +13,8 @@ import shlex
 
 HEAP_PAGE_ALIGN_LOG = 14
 HEAP_PAGE_ALIGN_MASK = (~(~0 << HEAP_PAGE_ALIGN_LOG))
+HEAP_PAGE_ALIGN = (1 << HEAP_PAGE_ALIGN_LOG)
+HEAP_PAGE_SIZE = HEAP_PAGE_ALIGN
 
 class BackTrace:
     VM_FRAME_MAGIC_METHOD = 0x11110001
@@ -328,6 +330,9 @@ def lldb_inspect(debugger, target, result, val):
         elif flType == RUBY_T_HASH:
             result.write("T_HASH: %s" % flaginfo)
             append_command_output(debugger, "p *(struct RHash *) %0#x" % val.GetValueAsUnsigned(), result)
+        elif flType == RUBY_T_PAYLOAD:
+            result.write("T_PAYLOAD: %s" % flaginfo)
+            append_command_output(debugger, "p *(struct RPayload *) %0#x" % val.GetValueAsUnsigned(), result)
         elif flType == RUBY_T_BIGNUM:
             tRBignum = target.FindFirstType("struct RBignum").GetPointerType()
             val = val.Cast(tRBignum)
@@ -402,8 +407,6 @@ def lldb_inspect(debugger, target, result, val):
             print("T_IMEMO: ", file=result)
             append_command_output(debugger, "p (enum imemo_type) %d" % imemo_type, result)
             append_command_output(debugger, "p *(struct MEMO *) %0#x" % val.GetValueAsUnsigned(), result)
-            if imemo_type == 6:
-                print("complemented={} cached={} invalidated={}".format((flags & RUBY_FL_USER7) > 0, (flags & RUBY_FL_USER8) > 0, (flags & RUBY_FL_USER9) > 0), file=result)
         elif flType == RUBY_T_ZOMBIE:
             tRZombie = target.FindFirstType("struct RZombie").GetPointerType()
             val = val.Cast(tRZombie)
@@ -539,6 +542,16 @@ class HeapPageIter:
         self.tRBasic = target.FindFirstType("struct RBasic")
         self.tRValue = target.FindFirstType("struct RVALUE")
 
+    def is_valid(self):
+        heap_page_header_size = self.target.FindFirstType("struct heap_page_header").GetByteSize()
+        rvalue_size = self.tRValue.GetByteSize()
+        heap_page_obj_limit = (HEAP_PAGE_SIZE - heap_page_header_size)/rvalue_size
+
+        if (self.num_slots > heap_page_obj_limit) or (self.num_slots < heap_page_obj_limit - 1):
+            return False
+        else:
+            return True
+
     def __iter__(self):
         return self
 
@@ -570,24 +583,30 @@ def dump_page_internal(page, target, process, thread, frame, result, debugger, h
         obj = target.CreateValueFromAddress("object", obj_addr, tRVALUE)
         fl_start = obj.GetChildMemberWithName("as").GetChildMemberWithName("free").GetChildMemberWithName("next").GetValueAsUnsigned()
 
-    for (page_index, obj_addr, obj) in HeapPageIter(page, target):
-        dump_bits(target, result, page, obj_addr, end= " ")
-        flags = obj.GetChildMemberWithName('flags').GetValueAsUnsigned()
-        flType = flags & RUBY_T_MASK
 
-        flidx = '   '
-        if flType == RUBY_T_NONE:
-            try:
-                flidx = "%3d" % freelist.index(obj_addr)
-            except ValueError:
-                flidx = '   '
+    page_iter = HeapPageIter(page, target)
+    if page_iter.is_valid():
+        for (page_index, obj_addr, obj) in page_iter:
+            dump_bits(target, result, page, obj_addr, end= " ")
+            flags = obj.GetChildMemberWithName('flags').GetValueAsUnsigned()
+            flType = flags & RUBY_T_MASK
 
-        result_str = "%s idx: [%3d] freelist_idx: {%s} Addr: %0#x (flags: %0#x)" % (rb_type(flags, ruby_type_map), page_index, flidx, obj_addr, flags)
+            flidx = '   '
+            if flType == RUBY_T_NONE:
+                try:
+                    flidx = "%3d" % freelist.index(obj_addr)
+                except ValueError:
+                    flidx = '   '
 
-        if highlight == obj_addr:
-            result_str = ' '.join([result_str, "<<<<<"])
+            result_str = "%s idx: [%3d] freelist_idx: {%s} Addr: %0#x (flags: %0#x)" % (rb_type(flags, ruby_type_map), page_index, flidx, obj_addr, flags)
 
-        print(result_str, file=result)
+            if highlight == obj_addr:
+                result_str = ' '.join([result_str, "<<<<<"])
+
+            print(result_str, file=result)
+    else:
+        print("%s is not a valid heap page" % page, file=result)
+
 
 
 def dump_page(debugger, command, result, internal_dict):
