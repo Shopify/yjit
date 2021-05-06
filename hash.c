@@ -800,7 +800,7 @@ ar_force_convert_table(VALUE hash, const char *file, int line)
     if (RHASH_AR_TABLE(hash)) {
         unsigned i, bound = RHASH_AR_TABLE_BOUND(hash);
 
-#if RHASH_CONVERT_TABLE_DEBUG
+#if defined(RHASH_CONVERT_TABLE_DEBUG) && RHASH_CONVERT_TABLE_DEBUG
         rb_obj_info_dump(hash);
         fprintf(stderr, "force_convert: %s:%d\n", file, line);
         RB_DEBUG_COUNTER_INC(obj_hash_force_convert);
@@ -4555,7 +4555,7 @@ rb_hash_any_p(int argc, VALUE *argv, VALUE hash)
  *  Nested Hashes:
  *    h = {foo: {bar: {baz: 2}}}
  *    h.dig(:foo) # => {:bar=>{:baz=>2}}
- *    h.dig(:foo, :bar) # => {:bar=>{:baz=>2}}
+ *    h.dig(:foo, :bar) # => {:baz=>2}
  *    h.dig(:foo, :bar, :baz) # => 2
  *    h.dig(:foo, :bar, :BAZ) # => nil
  *

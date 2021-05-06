@@ -662,6 +662,18 @@ AS_CASE(["$GCC:${warnflags+set}:${extra_warnflags:+set}:"],
 	    ])
 	])
     done
+    AS_IF([test "$particular_werror_flags" = "yes"], [
+	wflag=-Werror=undef
+    ], [
+	wflag=-Wundef
+    ])
+    RUBY_TRY_CFLAGS($wflag, [
+	RUBY_APPEND_OPTIONS(warnflags, $wflag)
+    ], [], [
+	@%:@if !defined(RUBY_CONFIG_TEST_NEVER_DEFINED_SYMBOL)
+	@%:@elif RUBY_CONFIG_TEST_NEVER_DEFINED_SYMBOL
+	@%:@endif
+    ])
     AS_CASE([" $warnflags "],[*" -Wno-missing-field-initializers "*], [wflag="-Wall -Wextra"],
                              [wflag=-Wall])
     RUBY_TRY_CFLAGS($wflag, [warnflags="$wflag${warnflags+ $warnflags}"])
@@ -2115,6 +2127,7 @@ AS_IF([test x$rb_cv_builtin___builtin_choose_expr = xyes], [
 ])
 RUBY_CHECK_BUILTIN_FUNC(__builtin_types_compatible_p, [__builtin_types_compatible_p(int, int)])
 RUBY_CHECK_BUILTIN_FUNC(__builtin_trap, [__builtin_trap()])
+RUBY_CHECK_BUILTIN_FUNC(__builtin_expect, [__builtin_expect(0, 0)])
 
 AS_IF([test "$ac_cv_func_qsort_r" != no], [
   AC_CACHE_CHECK(whether qsort_r is GNU version, rb_cv_gnu_qsort_r,
@@ -2722,6 +2735,24 @@ main(int argc, char *argv[])
 	rb_cv_fork_with_pthread=yes)])
     test x$rb_cv_fork_with_pthread = xyes || AC_DEFINE(CANNOT_FORK_WITH_PTHREAD)
 ])
+
+AS_CASE([$target_os],
+    [darwin*], [ac_cv_header_sys_user_h=yes], dnl LIST_HEAD conflicts with sys/queue.h
+    [AC_CHECK_HEADERS([sys/user.h])]
+)
+AS_IF([test "x$ac_cv_func_mmap:$ac_cv_header_sys_user_h" = xyes:yes], [
+    AC_CACHE_CHECK([whether PAGE_SIZE is compile-time const], rb_cv_const_page_size,
+        [AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+            @%:@include <sys/user.h>
+            typedef char conftest_page[PAGE_SIZE];
+        ]], [[]])],
+        [rb_cv_const_page_size=yes],
+        [rb_cv_const_page_size=no])])
+])
+AS_IF([test "x$rb_cv_const_page_size" = xyes],
+    [AC_DEFINE(HAVE_CONST_PAGE_SIZE, 1)],
+    [AC_DEFINE(HAVE_CONST_PAGE_SIZE, 0)]
+)
 }
 
 : "runtime section" && {

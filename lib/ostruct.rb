@@ -166,11 +166,21 @@ class OpenStruct
   #   data.to_h {|name, value| [name.to_s, value.upcase] }
   #               # => {"country" => "AUSTRALIA", "capital" => "CANBERRA" }
   #
-  def to_h(&block)
-    if block
-      @table.to_h(&block)
-    else
-      @table.dup
+  if {test: :to_h}.to_h{ [:works, true] }[:works] # RUBY_VERSION < 2.6 compatibility
+    def to_h(&block)
+      if block
+        @table.to_h(&block)
+      else
+        @table.dup
+      end
+    end
+  else
+    def to_h(&block)
+      if block
+        @table.map(&block).to_h
+      else
+        @table.dup
+      end
     end
   end
 
@@ -220,7 +230,7 @@ class OpenStruct
   private def is_method_protected!(name) # :nodoc:
     if !respond_to?(name, true)
       false
-    elsif name.end_with?('!')
+    elsif name.match?(/!$/)
       true
     else
       owner = method!(name).owner

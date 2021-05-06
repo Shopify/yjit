@@ -219,6 +219,10 @@ struct rb_control_frame_struct;
 /* iseq data type */
 typedef struct rb_compile_option_struct rb_compile_option_t;
 
+#if (SIZEOF_SERIAL_T > SIZEOF_VOIDP) && defined(__CYGWIN__)
+#pragma pack(push, 4) /* == SIZEOF_VOIDP */
+#endif
+
 // imemo_constcache
 struct iseq_inline_constant_cache_entry {
     VALUE flags;
@@ -228,6 +232,10 @@ struct iseq_inline_constant_cache_entry {
     rb_serial_t ic_serial;    // v2
                               // v3
 };
+
+#if (SIZEOF_SERIAL_T > SIZEOF_VOIDP) && defined(__CYGWIN__)
+#pragma pack(pop)
+#endif
 
 struct iseq_inline_constant_cache {
     struct iseq_inline_constant_cache_entry *entry;
@@ -672,7 +680,7 @@ typedef struct rb_vm_struct {
 #endif
     const struct rb_callcache *global_cc_cache_table[VM_GLOBAL_CC_CACHE_TABLE_SIZE]; // vm_eval.c
 
-#if USE_VM_CLOCK
+#if defined(USE_VM_CLOCK) && USE_VM_CLOCK
     uint32_t clock;
 #endif
 
@@ -874,7 +882,7 @@ struct rb_execution_context_struct {
     /* interrupt flags */
     rb_atomic_t interrupt_flag;
     rb_atomic_t interrupt_mask; /* size should match flag */
-#if USE_VM_CLOCK
+#if defined(USE_VM_CLOCK) && USE_VM_CLOCK
     uint32_t checked_clock;
 #endif
 
@@ -1808,7 +1816,7 @@ static inline rb_execution_context_t *
 rb_current_execution_context(void)
 {
 #ifdef RB_THREAD_LOCAL_SPECIFIER
-  #if __APPLE__
+  #ifdef __APPLE__
     rb_execution_context_t *ec = rb_current_ec();
   #else
     rb_execution_context_t *ec = ruby_current_ec;
@@ -1895,7 +1903,7 @@ enum {
 static inline bool
 RUBY_VM_INTERRUPTED_ANY(rb_execution_context_t *ec)
 {
-#if USE_VM_CLOCK
+#if defined(USE_VM_CLOCK) && USE_VM_CLOCK
     uint32_t current_clock = rb_ec_vm_ptr(ec)->clock;
 
     if (current_clock != ec->checked_clock) {
