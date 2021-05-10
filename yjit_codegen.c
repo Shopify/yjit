@@ -2528,6 +2528,9 @@ gen_opt_getinlinecache(jitstate_t *jit, ctx_t *ctx)
     return YJIT_END_BLOCK;
 }
 
+// Push the explict block parameter onto the temporary stack. Part of the
+// interpreter's scheme for avoiding Proc allocations when delegating
+// explict block parameters.
 static codegen_status_t
 gen_getblockparamproxy(jitstate_t *jit, ctx_t *ctx)
 {
@@ -2559,7 +2562,7 @@ gen_getblockparamproxy(jitstate_t *jit, ctx_t *ctx)
 
     // Bail unless VM_BH_ISEQ_BLOCK_P(bh). This also checks for null.
     cmp(cb, REG0_8, imm_opnd(0x1));
-    jnz_ptr(cb, side_exit);
+    jne_ptr(cb, side_exit);
 
     // Push rb_block_param_proxy. It's a root, so no need to use jit_mov_gc_ptr.
     mov(cb, REG0, const_ptr_opnd((void *)rb_block_param_proxy));
