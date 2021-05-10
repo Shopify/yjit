@@ -1303,7 +1303,7 @@ vm_setinstancevariable(const rb_iseq_t *iseq, VALUE obj, ID id, VALUE val, IVC i
 void
 rb_vm_setinstancevariable(const rb_iseq_t *iseq, VALUE obj, ID id, VALUE val, IVC ic)
 {
-    return vm_setinstancevariable(iseq, obj, id, val, ic);
+    vm_setinstancevariable(iseq, obj, id, val, ic);
 }
 
 static VALUE
