@@ -97,7 +97,7 @@ module Test
         $stdout = orig_stdout if orig_stdout
         o.close if o && !o.closed?
         i.close if i && !i.closed?
-        @timer_thread&.kill
+        @timer_thread&.kill&.join
       end
 
       def run(args = []) # :nodoc:
