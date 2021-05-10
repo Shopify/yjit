@@ -2557,7 +2557,7 @@ gen_getblockparamproxy(jitstate_t *jit, ctx_t *ctx)
     // note, VM_ASSERT(VM_ENV_LOCAL_P(ep))
     mov(cb, REG0, mem_opnd(64, REG0, SIZEOF_VALUE * VM_ENV_DATA_INDEX_SPECVAL));
 
-    // Block handler is a tagged pointer. Look at the tag.
+    // Block handler is a tagged pointer. Look at the tag. 0x03 is from VM_BH_ISEQ_BLOCK_P().
     and(cb, REG0_8, imm_opnd(0x3));
 
     // Bail unless VM_BH_ISEQ_BLOCK_P(bh). This also checks for null.
