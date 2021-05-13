@@ -1629,6 +1629,52 @@ command_asgn	: lhs '=' lex_ctxt command_rhs
 		    /*% %*/
 		    /*% ripper: opassign!(field!($1, ID2VAL(idCOLON2), $3), $4, $6) %*/
 		    }
+		| defn_head f_opt_paren_args '=' command
+		    {
+			endless_method_name(p, $<node>1, &@1);
+			restore_defun(p, $<node>1->nd_defn);
+		    /*%%%*/
+			$$ = set_defun_body(p, $1, $2, $4, &@$);
+		    /*% %*/
+		    /*% ripper: def!(get_value($1), $2, $4) %*/
+			local_pop(p);
+		    }
+		| defn_head f_opt_paren_args '=' command modifier_rescue arg
+		    {
+			endless_method_name(p, $<node>1, &@1);
+			restore_defun(p, $<node>1->nd_defn);
+		    /*%%%*/
+			$4 = rescued_expr(p, $4, $6, &@4, &@5, &@6);
+			$$ = set_defun_body(p, $1, $2, $4, &@$);
+		    /*% %*/
+		    /*% ripper: def!(get_value($1), $2, rescue_mod!($4, $6)) %*/
+			local_pop(p);
+		    }
+		| defs_head f_opt_paren_args '=' command
+		    {
+			endless_method_name(p, $<node>1, &@1);
+			restore_defun(p, $<node>1->nd_defn);
+		    /*%%%*/
+			$$ = set_defun_body(p, $1, $2, $4, &@$);
+		    /*%
+			$1 = get_value($1);
+		    %*/
+		    /*% ripper: defs!(AREF($1, 0), AREF($1, 1), AREF($1, 2), $2, $4) %*/
+			local_pop(p);
+		    }
+		| defs_head f_opt_paren_args '=' command modifier_rescue arg
+		    {
+			endless_method_name(p, $<node>1, &@1);
+			restore_defun(p, $<node>1->nd_defn);
+		    /*%%%*/
+			$4 = rescued_expr(p, $4, $6, &@4, &@5, &@6);
+			$$ = set_defun_body(p, $1, $2, $4, &@$);
+		    /*%
+			$1 = get_value($1);
+		    %*/
+		    /*% ripper: defs!(AREF($1, 0), AREF($1, 1), AREF($1, 2), $2, rescue_mod!($4, $6)) %*/
+			local_pop(p);
+		    }
 		| backref tOP_ASGN lex_ctxt command_rhs
 		    {
 		    /*%%%*/
@@ -6779,7 +6825,11 @@ read_escape(struct parser_params *p, int flags, rb_encoding **encp)
 	    goto eof;
 	}
 	if ((c = nextc(p)) == '\\') {
-	    if (peek(p, 'u')) goto eof;
+	    switch (peekc(p)) {
+	      case 'u': case 'U':
+		nextc(p);
+		goto eof;
+	    }
 	    return read_escape(p, flags|ESCAPE_META, encp) | 0x80;
 	}
 	else if (c == -1 || !ISASCII(c)) goto eof;
@@ -6804,7 +6854,11 @@ read_escape(struct parser_params *p, int flags, rb_encoding **encp)
       case 'c':
 	if (flags & ESCAPE_CONTROL) goto eof;
 	if ((c = nextc(p))== '\\') {
-	    if (peek(p, 'u')) goto eof;
+	    switch (peekc(p)) {
+	      case 'u': case 'U':
+		nextc(p);
+		goto eof;
+	    }
 	    c = read_escape(p, flags|ESCAPE_CONTROL, encp);
 	}
 	else if (c == '?')
@@ -6856,10 +6910,8 @@ static int
 tokadd_escape(struct parser_params *p, rb_encoding **encp)
 {
     int c;
-    int flags = 0;
     size_t numlen;
 
-  first:
     switch (c = nextc(p)) {
       case '\n':
 	return 0;		/* just ignore */
@@ -6880,37 +6932,6 @@ tokadd_escape(struct parser_params *p, rb_encoding **encp)
 	    if (numlen == 0) return -1;
 	    tokcopy(p, (int)numlen + 2);
 	}
-	return 0;
-
-      case 'M':
-	if (flags & ESCAPE_META) goto eof;
-	if ((c = nextc(p)) != '-') {
-	    pushback(p, c);
-	    goto eof;
-	}
-	tokcopy(p, 3);
-	flags |= ESCAPE_META;
-	goto escaped;
-
-      case 'C':
-	if (flags & ESCAPE_CONTROL) goto eof;
-	if ((c = nextc(p)) != '-') {
-	    pushback(p, c);
-	    goto eof;
-	}
-	tokcopy(p, 3);
-	goto escaped;
-
-      case 'c':
-	if (flags & ESCAPE_CONTROL) goto eof;
-	tokcopy(p, 2);
-	flags |= ESCAPE_CONTROL;
-      escaped:
-	if ((c = nextc(p)) == '\\') {
-	    goto first;
-	}
-	else if (c == -1) goto eof;
-	tokadd(p, c);
 	return 0;
 
       eof:
@@ -7105,6 +7126,23 @@ tokadd_string(struct parser_params *p,
 		    goto non_ascii;
 		}
 		if (func & STR_FUNC_REGEXP) {
+                    switch (c) {
+                      case 'c':
+                      case 'C':
+                      case 'M': {
+                        pushback(p, c);
+                        c = read_escape(p, 0, enc);
+
+                        int i;
+                        char escbuf[5];
+                        snprintf(escbuf, sizeof(escbuf), "\\x%02X", c);
+                        for(i = 0; i < 4; i++) {
+                            tokadd(p, escbuf[i]);
+                        }
+                        continue;
+                      }
+                    }
+
 		    if (c == term && !simple_re_meta(c)) {
 			tokadd(p, c);
 			continue;
