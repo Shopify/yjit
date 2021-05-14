@@ -5,7 +5,6 @@ include FileUtils
 
 REPOSITORIES = {
   rubygems: 'rubygems/rubygems',
-  bundler: 'rubygems/rubygems',
   rdoc: 'ruby/rdoc',
   reline: 'ruby/reline',
   json: 'flori/json',
@@ -94,17 +93,21 @@ def sync_default_gems(gem)
     rm_rf(%w[lib/rubygems lib/rubygems.rb test/rubygems])
     cp_r(Dir.glob("#{upstream}/lib/rubygems*"), "lib")
     cp_r("#{upstream}/test/rubygems", "test")
-  when "bundler"
-    rm_rf(%w[lib/bundler lib/bundler.rb libexec/bundler libexec/bundle spec/bundler tool/bundler/*] + Dir.glob("man/{bundle*,gemfile*}"))
+    rm_rf(%w[lib/bundler lib/bundler.rb libexec/bundler libexec/bundle spec/bundler tool/bundler/*])
     cp_r(Dir.glob("#{upstream}/bundler/lib/bundler*"), "lib")
     cp_r(Dir.glob("#{upstream}/bundler/exe/bundle*"), "libexec")
-    cp_r("#{upstream}/bundler/bundler.gemspec", "lib/bundler")
+
+    gemspec_content = File.readlines("#{upstream}/bundler/bundler.gemspec").map do |line|
+      next if line =~ /extra_rdoc_files/
+
+      line.gsub("bundler.gemspec", "lib/bundler/bundler.gemspec").gsub('"exe"', '"libexec"')
+    end.compact.join
+    File.write("lib/bundler/bundler.gemspec", gemspec_content)
+
     cp_r("#{upstream}/bundler/spec", "spec/bundler")
     cp_r(Dir.glob("#{upstream}/bundler/tool/bundler/test_gems*"), "tool/bundler")
     cp_r(Dir.glob("#{upstream}/bundler/tool/bundler/rubocop_gems*"), "tool/bundler")
     cp_r(Dir.glob("#{upstream}/bundler/tool/bundler/standard_gems*"), "tool/bundler")
-    cp_r(Dir.glob("#{upstream}/bundler/man/*.{1,5,1\.txt,5\.txt,ronn}"), "man")
-    `git checkout lib/bundler/bundler.gemspec`
     rm_rf(%w[spec/bundler/support/artifice/vcr_cassettes])
   when "rdoc"
     rm_rf(%w[lib/rdoc lib/rdoc.rb test/rdoc libexec/rdoc libexec/ri])
