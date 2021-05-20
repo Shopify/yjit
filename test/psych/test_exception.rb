@@ -33,13 +33,13 @@ module Psych
 
     def test_backtrace
       err     = make_ex
-      new_err = Psych.load(Psych.dump(err))
+      new_err = Psych.unsafe_load(Psych.dump(err))
       assert_equal err.backtrace, new_err.backtrace
     end
 
     def test_naming_exception
       err     = String.xxx rescue $!
-      new_err = Psych.load(Psych.dump(err))
+      new_err = Psych.unsafe_load(Psych.dump(err))
       assert_equal err.message, new_err.message
     end
 
@@ -53,12 +53,6 @@ module Psych
         Psych.load '--- `', filename: 'meow'
       end
       assert_equal 'meow', ex.file
-
-      # deprecated interface
-      ex = assert_raise(Psych::SyntaxError) do
-        Psych.load '--- `', 'deprecated'
-      end
-      assert_equal 'deprecated', ex.file
     end
 
     def test_psych_parse_stream_takes_file
@@ -86,12 +80,6 @@ module Psych
         Psych.load_stream '--- `', filename: 'omg!'
       end
       assert_equal 'omg!', ex.file
-
-      # deprecated interface
-      ex = assert_raise(Psych::SyntaxError) do
-        Psych.load_stream '--- `', 'deprecated'
-      end
-      assert_equal 'deprecated', ex.file
     end
 
     def test_parse_file_exception
@@ -141,12 +129,6 @@ module Psych
         Psych.parse '--- `', filename: 'omg!'
       end
       assert_match 'omg!', ex.message
-
-      # deprecated interface
-      ex = assert_raise(Psych::SyntaxError) do
-        Psych.parse '--- `', 'deprecated'
-      end
-      assert_match 'deprecated', ex.message
     end
 
     def test_attributes
@@ -165,7 +147,7 @@ module Psych
     end
 
     def test_convert
-      w = Psych.load(Psych.dump(@wups))
+      w = Psych.unsafe_load(Psych.dump(@wups))
       assert_equal @wups.message, w.message
       assert_equal @wups.backtrace, w.backtrace
       assert_equal 1, w.foo
