@@ -588,6 +588,27 @@ gen_newarray(jitstate_t* jit, ctx_t* ctx)
     return YJIT_KEEP_COMPILING;
 }
 
+// new hash initialized from top N values
+static codegen_status_t
+gen_newhash(jitstate_t* jit, ctx_t* ctx)
+{
+    rb_num_t n = (rb_num_t)jit_get_arg(jit, 0);
+
+    if (n == 0) {
+        // val = rb_hash_new();
+        yjit_save_regs(cb);
+        call_ptr(cb, REG0, (void *)rb_hash_new);
+        yjit_load_regs(cb);
+
+        x86opnd_t stack_ret = ctx_stack_push(ctx, TYPE_HASH);
+        mov(cb, stack_ret, RAX);
+
+        return YJIT_KEEP_COMPILING;
+    } else {
+        return YJIT_CANT_COMPILE;
+    }
+}
+
 static codegen_status_t
 gen_putnil(jitstate_t* jit, ctx_t* ctx)
 {
@@ -2797,6 +2818,7 @@ yjit_init_codegen(void)
     yjit_reg_op(BIN(pop), gen_pop);
     yjit_reg_op(BIN(adjuststack), gen_adjuststack);
     yjit_reg_op(BIN(newarray), gen_newarray);
+    yjit_reg_op(BIN(newhash), gen_newhash);
     yjit_reg_op(BIN(putnil), gen_putnil);
     yjit_reg_op(BIN(putobject), gen_putobject);
     yjit_reg_op(BIN(putobject_INT2FIX_0_), gen_putobject_int2fix);
