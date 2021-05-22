@@ -7,6 +7,7 @@
 #include "internal/compile.h"
 #include "internal/class.h"
 #include "internal/object.h"
+#include "internal/string.h"
 #include "insns_info.inc"
 #include "yjit.h"
 #include "yjit_iface.h"
@@ -642,6 +643,23 @@ gen_putobject(jitstate_t* jit, ctx_t* ctx)
         x86opnd_t stack_top = ctx_stack_push(ctx, val_type);
         mov(cb, stack_top, REG0);
     }
+
+    return YJIT_KEEP_COMPILING;
+}
+
+static codegen_status_t
+gen_putstring(jitstate_t* jit, ctx_t* ctx)
+{
+    VALUE put_val = jit_get_arg(jit, 0);
+
+    yjit_save_regs(cb);
+    mov(cb, C_ARG_REGS[0], REG_EC);
+    jit_mov_gc_ptr(jit, cb, C_ARG_REGS[1], put_val);
+    call_ptr(cb, REG0, (void *)rb_ec_str_resurrect);
+    yjit_load_regs(cb);
+
+    x86opnd_t stack_top = ctx_stack_push(ctx, TYPE_STRING);
+    mov(cb, stack_top, RAX);
 
     return YJIT_KEEP_COMPILING;
 }
@@ -2803,6 +2821,7 @@ yjit_init_codegen(void)
     yjit_reg_op(BIN(adjuststack), gen_adjuststack);
     yjit_reg_op(BIN(putnil), gen_putnil);
     yjit_reg_op(BIN(putobject), gen_putobject);
+    yjit_reg_op(BIN(putstring), gen_putstring);
     yjit_reg_op(BIN(putobject_INT2FIX_0_), gen_putobject_int2fix);
     yjit_reg_op(BIN(putobject_INT2FIX_1_), gen_putobject_int2fix);
     yjit_reg_op(BIN(putself), gen_putself);
