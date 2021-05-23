@@ -7,6 +7,7 @@
 #include "internal/compile.h"
 #include "internal/class.h"
 #include "internal/object.h"
+#include "internal/string.h"
 #include "insns_info.inc"
 #include "yjit.h"
 #include "yjit_iface.h"
@@ -1371,6 +1372,31 @@ gen_checktype(jitstate_t* jit, ctx_t* ctx)
     } else {
         return YJIT_CANT_COMPILE;
     }
+}
+
+static codegen_status_t
+gen_concatstrings(jitstate_t* jit, ctx_t* ctx)
+{
+    rb_num_t n = (rb_num_t)jit_get_arg(jit, 0);
+
+    // Save the PC and SP because we are allocating
+    jit_save_pc(jit, REG0);
+    jit_save_sp(jit, ctx);
+
+    x86opnd_t values_ptr = ctx_sp_opnd(ctx, -(sizeof(VALUE) * (uint32_t)n));
+
+    // call rb_str_concat_literals(long n, const VALUE *strings);
+    yjit_save_regs(cb);
+    mov(cb, C_ARG_REGS[0], imm_opnd(n));
+    lea(cb, C_ARG_REGS[1], values_ptr);
+    call_ptr(cb, REG0, (void *)rb_str_concat_literals);
+    yjit_load_regs(cb);
+
+    ctx_stack_pop(ctx, n);
+    x86opnd_t stack_ret = ctx_stack_push(ctx, TYPE_STRING);
+    mov(cb, stack_ret, RAX);
+
+    return YJIT_KEEP_COMPILING;
 }
 
 static void
@@ -2950,6 +2976,7 @@ yjit_init_codegen(void)
     yjit_reg_op(BIN(adjuststack), gen_adjuststack);
     yjit_reg_op(BIN(newarray), gen_newarray);
     yjit_reg_op(BIN(newhash), gen_newhash);
+    yjit_reg_op(BIN(concatstrings), gen_concatstrings);
     yjit_reg_op(BIN(putnil), gen_putnil);
     yjit_reg_op(BIN(putobject), gen_putobject);
     yjit_reg_op(BIN(putobject_INT2FIX_0_), gen_putobject_int2fix);
