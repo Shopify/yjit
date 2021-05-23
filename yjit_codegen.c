@@ -1315,6 +1315,64 @@ gen_defined(jitstate_t* jit, ctx_t* ctx)
     return YJIT_KEEP_COMPILING;
 }
 
+static codegen_status_t
+gen_checktype(jitstate_t* jit, ctx_t* ctx)
+{
+    // TODO: could we specialize on the type we detect
+    uint8_t* side_exit = yjit_side_exit(jit, ctx);
+
+    enum ruby_value_type type_val = (enum ruby_value_type)jit_get_arg(jit, 0);
+    // Only three types are emitted by compile.c
+    if (type_val == T_STRING || type_val == T_ARRAY || type_val == T_HASH) {
+        val_type_t val_type = ctx_get_opnd_type(ctx, OPND_STACK(0));
+        x86opnd_t val = ctx_stack_pop(ctx, 1);
+
+        x86opnd_t stack_ret;
+
+        // Check if we know from type information
+        if ((type_val == T_STRING && val_type.type == ETYPE_STRING) ||
+                (type_val == T_ARRAY && val_type.type == ETYPE_ARRAY) ||
+                (type_val == T_HASH && val_type.type == ETYPE_HASH)) {
+            // guaranteed type match
+            stack_ret = ctx_stack_push(ctx, TYPE_TRUE);
+            mov(cb, stack_ret, imm_opnd(Qtrue));
+            return YJIT_KEEP_COMPILING;
+        } else if (val_type.is_imm || val_type.type != ETYPE_UNKNOWN) {
+            // guaranteed not to match T_STRING/T_ARRAY/T_HASH
+            stack_ret = ctx_stack_push(ctx, TYPE_FALSE);
+            mov(cb, stack_ret, imm_opnd(Qfalse));
+            return YJIT_KEEP_COMPILING;
+        }
+
+        mov(cb, REG0, val);
+
+        if (!val_type.is_heap) {
+            // if (SPECIAL_CONST_P(val)) {
+            // Bail if receiver is not a heap object
+            test(cb, REG0, imm_opnd(RUBY_IMMEDIATE_MASK));
+            jnz_ptr(cb, side_exit);
+            cmp(cb, REG0, imm_opnd(Qfalse));
+            je_ptr(cb, side_exit);
+            cmp(cb, REG0, imm_opnd(Qnil));
+            je_ptr(cb, side_exit);
+        }
+
+        // Check type on object
+        mov(cb, REG0, mem_opnd(64, REG0, offsetof(struct RBasic, flags)));
+        and(cb, REG0, imm_opnd(RUBY_T_MASK));
+        cmp(cb, REG0, imm_opnd(type_val));
+        mov(cb, REG1, imm_opnd(Qfalse));
+        cmovne(cb, REG0, REG1);
+
+        stack_ret = ctx_stack_push(ctx, TYPE_IMM);
+        mov(cb, stack_ret, REG0);
+
+        return YJIT_KEEP_COMPILING;
+    } else {
+        return YJIT_CANT_COMPILE;
+    }
+}
+
 static void
 guard_two_fixnums(ctx_t* ctx, uint8_t* side_exit)
 {
@@ -2903,6 +2961,7 @@ yjit_init_codegen(void)
     yjit_reg_op(BIN(getinstancevariable), gen_getinstancevariable);
     yjit_reg_op(BIN(setinstancevariable), gen_setinstancevariable);
     yjit_reg_op(BIN(defined), gen_defined);
+    yjit_reg_op(BIN(checktype), gen_checktype);
     yjit_reg_op(BIN(opt_lt), gen_opt_lt);
     yjit_reg_op(BIN(opt_le), gen_opt_le);
     yjit_reg_op(BIN(opt_ge), gen_opt_ge);
