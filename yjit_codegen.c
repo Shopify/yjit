@@ -571,7 +571,7 @@ gen_newarray(jitstate_t* jit, ctx_t* ctx)
 {
     rb_num_t n = (rb_num_t)jit_get_arg(jit, 0);
 
-    x86opnd_t values_ptr = ctx_sp_opnd(ctx, -(sizeof(VALUE) * n));
+    x86opnd_t values_ptr = ctx_sp_opnd(ctx, -(sizeof(VALUE) * (uint32_t)n));
 
     // call rb_ec_ary_new_from_values(struct rb_execution_context_struct *ec, long n, const VALUE *elts);
     yjit_save_regs(cb);
