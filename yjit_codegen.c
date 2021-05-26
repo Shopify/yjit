@@ -571,6 +571,10 @@ gen_newarray(jitstate_t* jit, ctx_t* ctx)
 {
     rb_num_t n = (rb_num_t)jit_get_arg(jit, 0);
 
+    // Save the PC and SP because we are allocating
+    jit_save_pc(jit, REG0);
+    jit_save_sp(jit, ctx);
+
     x86opnd_t values_ptr = ctx_sp_opnd(ctx, -(sizeof(VALUE) * (uint32_t)n));
 
     // call rb_ec_ary_new_from_values(struct rb_execution_context_struct *ec, long n, const VALUE *elts);
@@ -595,6 +599,10 @@ gen_newhash(jitstate_t* jit, ctx_t* ctx)
     rb_num_t n = (rb_num_t)jit_get_arg(jit, 0);
 
     if (n == 0) {
+        // Save the PC and SP because we are allocating
+        jit_save_pc(jit, REG0);
+        jit_save_sp(jit, ctx);
+
         // val = rb_hash_new();
         yjit_save_regs(cb);
         call_ptr(cb, REG0, (void *)rb_hash_new);
