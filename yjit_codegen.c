@@ -113,6 +113,34 @@ jit_peek_at_self(jitstate_t *jit, ctx_t *ctx)
     return jit->ec->cfp->self;
 }
 
+// When we know a VALUE to be static, this returns an appropriate val_type_t
+static val_type_t
+jit_type_of_value(VALUE val)
+{
+    if (SPECIAL_CONST_P(val)) {
+        if (FIXNUM_P(val)) {
+            return TYPE_FIXNUM;
+        } else if (NIL_P(val)) {
+            return TYPE_NIL;
+        } else {
+            // generic immediate
+            return TYPE_IMM;
+        }
+    } else {
+        switch (BUILTIN_TYPE(val)) {
+            case T_ARRAY:
+               return TYPE_ARRAY;
+            case T_HASH:
+               return TYPE_HASH;
+            case T_STRING:
+               return TYPE_STRING;
+            default:
+                // generic heap object
+                return TYPE_HEAP;
+        }
+    }
+}
+
 // Save the incremented PC on the CFP
 // This is necessary when calleees can raise or allocate
 void
@@ -660,8 +688,7 @@ gen_putobject(jitstate_t* jit, ctx_t* ctx)
         VALUE put_val = jit_get_arg(jit, 0);
         jit_mov_gc_ptr(jit, cb, REG0, put_val);
 
-        // TODO: check for more specific types like array, string, symbol, etc.
-        val_type_t val_type = SPECIAL_CONST_P(put_val)? TYPE_IMM:TYPE_HEAP;
+        val_type_t val_type = jit_type_of_value(put_val);
 
         // Write argument at SP
         x86opnd_t stack_top = ctx_stack_push(ctx, val_type);
@@ -1037,7 +1064,8 @@ gen_get_ivar(jitstate_t *jit, ctx_t *ctx, const int max_chain_depth, VALUE compt
     // NOTE: This assumes nobody changes the allocator of the class after allocation.
     //       Eventually, we can encode whether an object is T_OBJECT or not
     //       inside object shapes.
-    if (rb_get_alloc_func(comptime_val_klass) != rb_class_allocate_instance) {
+    if (!RB_TYPE_P(comptime_receiver, T_OBJECT) ||
+            rb_get_alloc_func(comptime_val_klass) != rb_class_allocate_instance) {
         // General case. Call rb_ivar_get(). No need to reconstruct interpreter
         // state since the routine never raises exceptions or allocate objects
         // visibile to Ruby.
@@ -1754,6 +1782,40 @@ gen_opt_empty_p(jitstate_t* jit, ctx_t* ctx)
 {
     // Delegate to send, call the method on the recv
     return gen_opt_send_without_block(jit, ctx);
+}
+
+static codegen_status_t
+gen_opt_str_freeze(jitstate_t* jit, ctx_t* ctx)
+{
+    if (!assume_bop_not_redefined(jit->block, STRING_REDEFINED_OP_FLAG, BOP_FREEZE)) {
+        return YJIT_CANT_COMPILE;
+    }
+
+    VALUE str = jit_get_arg(jit, 0);
+    jit_mov_gc_ptr(jit, cb, REG0, str);
+
+    // Push the return value onto the stack
+    x86opnd_t stack_ret = ctx_stack_push(ctx, TYPE_STRING);
+    mov(cb, stack_ret, REG0);
+
+    return YJIT_KEEP_COMPILING;
+}
+
+static codegen_status_t
+gen_opt_str_uminus(jitstate_t* jit, ctx_t* ctx)
+{
+    if (!assume_bop_not_redefined(jit->block, STRING_REDEFINED_OP_FLAG, BOP_UMINUS)) {
+        return YJIT_CANT_COMPILE;
+    }
+
+    VALUE str = jit_get_arg(jit, 0);
+    jit_mov_gc_ptr(jit, cb, REG0, str);
+
+    // Push the return value onto the stack
+    x86opnd_t stack_ret = ctx_stack_push(ctx, TYPE_STRING);
+    mov(cb, stack_ret, REG0);
+
+    return YJIT_KEEP_COMPILING;
 }
 
 static codegen_status_t
@@ -2731,7 +2793,8 @@ gen_opt_getinlinecache(jitstate_t *jit, ctx_t *ctx)
     // FIXME: This leaks when st_insert raises NoMemoryError
     assume_stable_global_constant_state(jit->block);
 
-    x86opnd_t stack_top = ctx_stack_push(ctx, TYPE_UNKNOWN);
+    val_type_t type = jit_type_of_value(ice->value);
+    x86opnd_t stack_top = ctx_stack_push(ctx, type);
     jit_mov_gc_ptr(jit, cb, REG0, ice->value);
     mov(cb, stack_top, REG0);
 
@@ -2806,7 +2869,7 @@ void
 yjit_init_codegen(void)
 {
     // Initialize the code blocks
-    uint32_t mem_size = 128 * 1024 * 1024;
+    uint32_t mem_size = rb_yjit_opts.exec_mem_size * 1024 * 1024;
     uint8_t *mem_block = alloc_exec_mem(mem_size);
 
     cb = &block;
@@ -2853,6 +2916,8 @@ yjit_init_codegen(void)
     yjit_reg_op(BIN(opt_ltlt), gen_opt_ltlt);
     yjit_reg_op(BIN(opt_nil_p), gen_opt_nil_p);
     yjit_reg_op(BIN(opt_empty_p), gen_opt_empty_p);
+    yjit_reg_op(BIN(opt_str_freeze), gen_opt_str_freeze);
+    yjit_reg_op(BIN(opt_str_uminus), gen_opt_str_uminus);
     yjit_reg_op(BIN(opt_not), gen_opt_not);
     yjit_reg_op(BIN(opt_getinlinecache), gen_opt_getinlinecache);
     yjit_reg_op(BIN(branchif), gen_branchif);
