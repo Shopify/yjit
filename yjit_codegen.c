@@ -120,8 +120,12 @@ jit_type_of_value(VALUE val)
     if (SPECIAL_CONST_P(val)) {
         if (FIXNUM_P(val)) {
             return TYPE_FIXNUM;
-        } else if (NIL_P(val)) {
+        } else if (val == Qnil) {
             return TYPE_NIL;
+        } else if (val == Qtrue) {
+            return TYPE_TRUE;
+        } else if (val == Qfalse) {
+            return TYPE_FALSE;
         } else {
             // generic immediate
             return TYPE_IMM;
@@ -678,7 +682,7 @@ gen_putobject(jitstate_t* jit, ctx_t* ctx)
     }
     else if (arg == Qtrue || arg == Qfalse)
     {
-        x86opnd_t stack_top = ctx_stack_push(ctx, TYPE_IMM);
+        x86opnd_t stack_top = ctx_stack_push(ctx, jit_type_of_value(arg));
         mov(cb, stack_top, imm_opnd((int64_t)arg));
     }
     else
