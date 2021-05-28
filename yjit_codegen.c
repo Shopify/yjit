@@ -1904,17 +1904,30 @@ gen_branchif(jitstate_t* jit, ctx_t* ctx)
         yjit_check_ints(cb, side_exit);
     }
 
-    // Test if any bit (outside of the Qnil bit) is on
-    // RUBY_Qfalse  /* ...0000 0000 */
-    // RUBY_Qnil    /* ...0000 1000 */
-    x86opnd_t val_opnd = ctx_stack_pop(ctx, 1);
-    test(cb, val_opnd, imm_opnd(~Qnil));
-
     // Get the branch target instruction offsets
     uint32_t next_idx = jit_next_insn_idx(jit);
     uint32_t jump_idx = next_idx + jump_offset;
     blockid_t next_block = { jit->iseq, next_idx };
     blockid_t jump_block = { jit->iseq, jump_idx };
+
+    // Check if we know enough from type info
+    val_type_t val_type = ctx_get_opnd_type(ctx, OPND_STACK(0));
+    if (val_type.type != ETYPE_UNKNOWN) {
+        ctx_stack_pop(ctx, 1);
+        if (val_type.type == ETYPE_FALSE || val_type.type == ETYPE_NIL) {
+            gen_direct_jump(jit->block, ctx, next_block);
+            return YJIT_END_BLOCK;
+        } else {
+            gen_direct_jump(jit->block, ctx, jump_block);
+            return YJIT_END_BLOCK;
+        }
+    }
+
+    // Test if any bit (outside of the Qnil bit) is on
+    // RUBY_Qfalse  /* ...0000 0000 */
+    // RUBY_Qnil    /* ...0000 1000 */
+    x86opnd_t val_opnd = ctx_stack_pop(ctx, 1);
+    test(cb, val_opnd, imm_opnd(~Qnil));
 
     // Generate the branch instructions
     gen_branch(
@@ -1961,17 +1974,30 @@ gen_branchunless(jitstate_t* jit, ctx_t* ctx)
         yjit_check_ints(cb, side_exit);
     }
 
-    // Test if any bit (outside of the Qnil bit) is on
-    // RUBY_Qfalse  /* ...0000 0000 */
-    // RUBY_Qnil    /* ...0000 1000 */
-    x86opnd_t val_opnd = ctx_stack_pop(ctx, 1);
-    test(cb, val_opnd, imm_opnd(~Qnil));
-
     // Get the branch target instruction offsets
     uint32_t next_idx = jit_next_insn_idx(jit);
     uint32_t jump_idx = next_idx + jump_offset;
     blockid_t next_block = { jit->iseq, next_idx };
     blockid_t jump_block = { jit->iseq, jump_idx };
+
+    // Check if we know enough from type info
+    val_type_t val_type = ctx_get_opnd_type(ctx, OPND_STACK(0));
+    if (val_type.type != ETYPE_UNKNOWN) {
+        ctx_stack_pop(ctx, 1);
+        if (val_type.type == ETYPE_FALSE || val_type.type == ETYPE_NIL) {
+            gen_direct_jump(jit->block, ctx, jump_block);
+            return YJIT_END_BLOCK;
+        } else {
+            gen_direct_jump(jit->block, ctx, next_block);
+            return YJIT_END_BLOCK;
+        }
+    }
+
+    // Test if any bit (outside of the Qnil bit) is on
+    // RUBY_Qfalse  /* ...0000 0000 */
+    // RUBY_Qnil    /* ...0000 1000 */
+    x86opnd_t val_opnd = ctx_stack_pop(ctx, 1);
+    test(cb, val_opnd, imm_opnd(~Qnil));
 
     // Generate the branch instructions
     gen_branch(
@@ -2018,16 +2044,29 @@ gen_branchnil(jitstate_t* jit, ctx_t* ctx)
         yjit_check_ints(cb, side_exit);
     }
 
-    // Test if the value is Qnil
-    // RUBY_Qnil    /* ...0000 1000 */
-    x86opnd_t val_opnd = ctx_stack_pop(ctx, 1);
-    cmp(cb, val_opnd, imm_opnd(Qnil));
-
     // Get the branch target instruction offsets
     uint32_t next_idx = jit_next_insn_idx(jit);
     uint32_t jump_idx = next_idx + jump_offset;
     blockid_t next_block = { jit->iseq, next_idx };
     blockid_t jump_block = { jit->iseq, jump_idx };
+
+    // Check if we know enough from type info
+    val_type_t val_type = ctx_get_opnd_type(ctx, OPND_STACK(0));
+    if (val_type.type != ETYPE_UNKNOWN) {
+        ctx_stack_pop(ctx, 1);
+        if (val_type.type == ETYPE_NIL) {
+            gen_direct_jump(jit->block, ctx, jump_block);
+            return YJIT_END_BLOCK;
+        } else {
+            gen_direct_jump(jit->block, ctx, next_block);
+            return YJIT_END_BLOCK;
+        }
+    }
+
+    // Test if the value is Qnil
+    // RUBY_Qnil    /* ...0000 1000 */
+    x86opnd_t val_opnd = ctx_stack_pop(ctx, 1);
+    cmp(cb, val_opnd, imm_opnd(Qnil));
 
     // Generate the branch instructions
     gen_branch(
