@@ -2160,7 +2160,7 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
     //print_ptr(cb, recv);
 
     // If this function needs a Ruby stack frame
-    const bool push_frame = cfunc_needs_frame(cfunc);
+    const bool push_frame = true;
 
     // Create a size-exit to fall back to the interpreter
     uint8_t *side_exit = yjit_side_exit(jit, ctx);
@@ -2369,6 +2369,25 @@ iseq_lead_only_arg_setup_p(const rb_iseq_t *iseq)
 bool rb_iseq_only_optparam_p(const rb_iseq_t *iseq);
 bool rb_iseq_only_kwparam_p(const rb_iseq_t *iseq);
 
+// If true, the iseq is leaf and it can be replaced by a single C call.
+static bool
+rb_leaf_invokebuiltin_iseq_p(const rb_iseq_t *iseq)
+{
+    return iseq->body->iseq_size == 4 &&
+        rb_vm_insn_addr2opcode((void *)iseq->body->iseq_encoded[0]) == BIN(opt_invokebuiltin_delegate_leave) &&
+        rb_vm_insn_addr2opcode((void *)iseq->body->iseq_encoded[3]) == BIN(leave) &&
+        iseq->body->builtin_inline_p;
+}
+
+// Return an rb_builtin_function if the iseq contains only that leaf builtin function.
+static const struct rb_builtin_function*
+rb_leaf_builtin_function(const rb_iseq_t *iseq)
+{
+    if (!rb_leaf_invokebuiltin_iseq_p(iseq))
+        return NULL;
+    return (const struct rb_builtin_function *)iseq->body->iseq_encoded[1];
+}
+
 static codegen_status_t
 gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const rb_callable_method_entry_t *cme, rb_iseq_t *block, const int32_t argc)
 {
@@ -2434,6 +2453,31 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
 
     // Check for interrupts
     yjit_check_ints(cb, side_exit);
+
+    const struct rb_builtin_function *leaf_builtin = rb_leaf_builtin_function(iseq);
+    if (leaf_builtin) {
+        // Save YJIT registers
+        yjit_save_regs(cb);
+
+        // Call the builtin func (ec, recv, arg1, arg2, ...)
+        mov(cb, C_ARG_REGS[0], REG_EC);
+        for (int32_t i = 0; i < leaf_builtin->argc + 1; i++) {
+            x86opnd_t stack_opnd = mem_opnd(64, REG_SP, -(leaf_builtin->argc - i) * SIZEOF_VALUE);
+            x86opnd_t c_arg_reg = C_ARG_REGS[i + 1];
+            mov(cb, c_arg_reg, stack_opnd);
+        }
+        ctx_stack_pop(ctx, leaf_builtin->argc + 1);
+        call_ptr(cb, REG0, (void *)leaf_builtin->func_ptr);
+
+        // Load YJIT registers
+        yjit_load_regs(cb);
+
+        // Push the return value
+        x86opnd_t stack_ret = ctx_stack_push(ctx, TYPE_UNKNOWN);
+        mov(cb, stack_ret, RAX);
+
+        return YJIT_KEEP_COMPILING;
+    }
 
     // Stack overflow check
     // #define CHECK_VM_STACK_OVERFLOW0(cfp, sp, margin)
