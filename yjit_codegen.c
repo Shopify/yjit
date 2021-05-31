@@ -2369,6 +2369,25 @@ iseq_lead_only_arg_setup_p(const rb_iseq_t *iseq)
 bool rb_iseq_only_optparam_p(const rb_iseq_t *iseq);
 bool rb_iseq_only_kwparam_p(const rb_iseq_t *iseq);
 
+// If true, the iseq is leaf and it can be replaced by a single C call.
+static bool
+rb_leaf_invokebuiltin_iseq_p(const rb_iseq_t *iseq)
+{
+    return iseq->body->iseq_size == 4 &&
+        rb_vm_insn_addr2opcode((void *)iseq->body->iseq_encoded[0]) == BIN(opt_invokebuiltin_delegate_leave) &&
+        rb_vm_insn_addr2opcode((void *)iseq->body->iseq_encoded[3]) == BIN(leave) &&
+        iseq->body->builtin_inline_p;
+}
+
+// Return an rb_builtin_function if the iseq contains only that leaf builtin function.
+static const struct rb_builtin_function*
+rb_leaf_builtin_function(const rb_iseq_t *iseq)
+{
+    if (!rb_leaf_invokebuiltin_iseq_p(iseq))
+        return NULL;
+    return (const struct rb_builtin_function *)iseq->body->iseq_encoded[1];
+}
+
 static codegen_status_t
 gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const rb_callable_method_entry_t *cme, rb_iseq_t *block, const int32_t argc)
 {
@@ -2421,6 +2440,18 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
         // See vm_callee_setup_arg().
         GEN_COUNTER_INC(cb, send_iseq_complex_callee);
         return YJIT_CANT_COMPILE;
+    }
+
+    const struct rb_builtin_function *leaf_builtin = rb_leaf_builtin_function(iseq);
+    if (leaf_builtin) {
+        // TODO: generate code to call leaf_builtin->func_ptr.
+
+        // e.g. leaf_builtin->func_ptr is `builtin_inline_class_20(ec, self)` that just wraps `rb_obj_class(self)`
+        if (false /* use true to test this */ && leaf_builtin->argc == 0) { 
+            VALUE recv = INT2FIX(0);
+            VALUE ret = ((VALUE (*)(rb_execution_context_t *ec, VALUE))leaf_builtin->func_ptr)(GET_EC(), recv);
+            fprintf(stderr, "example: %s\n", RSTRING_PTR(rb_inspect(ret)));
+        }
     }
 
     // The starting pc of the callee frame
