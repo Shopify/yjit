@@ -85,7 +85,7 @@ Yukihiro Matsumoto (matz)
   https://github.com/rubygems/rubygems
   https://rubygems.org/gems/bundler
 [lib/cgi.rb, lib/cgi/*]
-  Takeyuki Fujioka (xibbar)
+  _unmaintained_
   https://github.com/ruby/cgi
   https://rubygems.org/gems/cgi
 [lib/csv.rb]
@@ -277,10 +277,6 @@ Yukihiro Matsumoto (matz)
   _unmaintained_
   https://github.com/ruby/tmpdir
   https://rubygems.org/gems/tmpdir
-[lib/tracer.rb]
-  Keiju ISHITSUKA (keiju)
-  https://github.com/ruby/tracer
-  https://rubygems.org/gems/tracer
 [lib/tsort.rb]
   Tanaka Akira (akr)
   https://github.com/ruby/tsort
@@ -316,10 +312,6 @@ Yukihiro Matsumoto (matz)
   _unmaintained_
   https://github.com/ruby/date
   https://rubygems.org/gems/date
-[ext/dbm]
-  _unmaintained_
-  https://github.com/ruby/dbm
-  https://rubygems.org/gems/dbm
 [ext/etc]
   Ruby core team
   https://github.com/ruby/etc
@@ -332,10 +324,6 @@ Yukihiro Matsumoto (matz)
   Aaron Patterson (tenderlove)
   https://github.com/ruby/fiddle
   https://rubygems.org/gems/fiddle
-[ext/gdbm]
-  Yukihiro Matsumoto (matz)
-  https://github.com/ruby/gdbm
-  https://rubygems.org/gems/gdbm
 [ext/io/console]
   Nobuyuki Nakada (nobu)
   https://github.com/ruby/io-console

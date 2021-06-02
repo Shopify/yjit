@@ -1794,6 +1794,8 @@ heap_page_add_freeobj(rb_objspace_t *objspace, struct heap_page *page, VALUE obj
 
     RVALUE *p = (RVALUE *)obj;
 
+    asan_unpoison_object(obj, false);
+
     asan_unpoison_memory_region(&page->freelist, sizeof(RVALUE*), false);
 
     p->as.free.flags = 0;
@@ -5863,24 +5865,51 @@ push_mark_stack(mark_stack_t *stack, VALUE data)
 {
     VALUE obj = data;
     switch (BUILTIN_TYPE(obj)) {
+      case T_OBJECT:
+      case T_CLASS:
+      case T_MODULE:
+      case T_FLOAT:
+      case T_STRING:
+      case T_REGEXP:
+      case T_ARRAY:
+      case T_HASH:
+      case T_STRUCT:
+      case T_BIGNUM:
+      case T_FILE:
+      case T_DATA:
+      case T_MATCH:
+      case T_COMPLEX:
+      case T_RATIONAL:
+      case T_TRUE:
+      case T_FALSE:
+      case T_SYMBOL:
+      case T_PAYLOAD:
+      case T_IMEMO:
+      case T_ICLASS:
+        if (stack->index == stack->limit) {
+            push_mark_stack_chunk(stack);
+        }
+        stack->chunk->data[stack->index++] = data;
+        return;
+
+      case T_NONE:
       case T_NIL:
       case T_FIXNUM:
       case T_MOVED:
+      case T_ZOMBIE:
+      case T_UNDEF:
+      case T_MASK:
 	rb_bug("push_mark_stack() called for broken object");
 	break;
 
       case T_NODE:
 	UNEXPECTED_NODE(push_mark_stack);
         break;
-
-      default:
-        break;
     }
 
-    if (stack->index == stack->limit) {
-        push_mark_stack_chunk(stack);
-    }
-    stack->chunk->data[stack->index++] = data;
+    rb_bug("rb_gc_mark(): unknown data type 0x%x(%p) %s",
+            BUILTIN_TYPE(obj), (void *)data,
+            is_pointer_to_heap(&rb_objspace, (void *)data) ? "corrupted object" : "non object");
 }
 
 static int
@@ -9998,6 +10027,24 @@ heap_check_moved_i(void *vstart, void *vend, size_t stride, void *data)
 static VALUE
 gc_compact(rb_execution_context_t *ec, VALUE self)
 {
+#if defined(HAVE_SYSCONF) && defined(_SC_PAGE_SIZE)
+    /* If Ruby's heap pages are not a multiple of the system page size, we
+     * cannot use mprotect for the read barrier, so we must disable compaction. */
+    int pagesize;
+    pagesize = (int)sysconf(_SC_PAGE_SIZE);
+    if ((HEAP_PAGE_SIZE % pagesize) != 0) {
+        rb_raise(rb_eNotImpError, "Compaction isn't available on this platform");
+    }
+#endif
+
+    /* If not MinGW, Windows, or does not have mmap, we cannot use mprotect for
+     * the read barrier, so we must disable compaction. */
+#if !defined(__MINGW32__) && !defined(_WIN32)
+    if (!USE_MMAP_ALIGNED_ALLOC) {
+        rb_raise(rb_eNotImpError, "Compaction isn't available on this platform");
+    }
+#endif
+
     /* Run GC with compaction enabled */
     gc_start_internal(ec, self, Qtrue, Qtrue, Qtrue, Qtrue);
 
