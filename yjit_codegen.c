@@ -2363,11 +2363,16 @@ bool rb_iseq_only_kwparam_p(const rb_iseq_t *iseq);
 static bool
 rb_leaf_invokebuiltin_iseq_p(const rb_iseq_t *iseq)
 {
-    return iseq->body->iseq_size == 4 &&
+    unsigned int invokebuiltin_len = insn_len(BIN(opt_invokebuiltin_delegate_leave));
+    unsigned int leave_len = insn_len(BIN(leave));
+
+    return iseq->body->iseq_size == (
+        (invokebuiltin_len + leave_len) &&
         rb_vm_insn_addr2opcode((void *)iseq->body->iseq_encoded[0]) == BIN(opt_invokebuiltin_delegate_leave) &&
-        rb_vm_insn_addr2opcode((void *)iseq->body->iseq_encoded[3]) == BIN(leave) &&
-        iseq->body->builtin_inline_p;
-}
+        rb_vm_insn_addr2opcode((void *)iseq->body->iseq_encoded[invokebuiltin_len]) == BIN(leave) &&
+        iseq->body->builtin_inline_p
+    );
+ }
 
 // Return an rb_builtin_function if the iseq contains only that leaf builtin function.
 static const struct rb_builtin_function*
