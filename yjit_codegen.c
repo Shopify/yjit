@@ -2159,23 +2159,18 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
     //print_str(cb, "recv");
     //print_ptr(cb, recv);
 
-    // If this function needs a Ruby stack frame
-    const bool push_frame = true;
-
     // Create a size-exit to fall back to the interpreter
     uint8_t *side_exit = yjit_side_exit(jit, ctx);
 
     // Check for interrupts
     yjit_check_ints(cb, side_exit);
 
-    if (push_frame) {
-        // Stack overflow check
-        // #define CHECK_VM_STACK_OVERFLOW0(cfp, sp, margin)
-        // REG_CFP <= REG_SP + 4 * sizeof(VALUE) + sizeof(rb_control_frame_t)
-        lea(cb, REG0, ctx_sp_opnd(ctx, sizeof(VALUE) * 4 + sizeof(rb_control_frame_t)));
-        cmp(cb, REG_CFP, REG0);
-        jle_ptr(cb, COUNTED_EXIT(side_exit, send_se_cf_overflow));
-    }
+    // Stack overflow check
+    // #define CHECK_VM_STACK_OVERFLOW0(cfp, sp, margin)
+    // REG_CFP <= REG_SP + 4 * sizeof(VALUE) + sizeof(rb_control_frame_t)
+    lea(cb, REG0, ctx_sp_opnd(ctx, sizeof(VALUE) * 4 + sizeof(rb_control_frame_t)));
+    cmp(cb, REG_CFP, REG0);
+    jle_ptr(cb, COUNTED_EXIT(side_exit, send_se_cf_overflow));
 
     // Points to the receiver operand on the stack
     x86opnd_t recv = ctx_stack_opnd(ctx, argc);
@@ -2183,71 +2178,69 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
     // Store incremented PC into current control frame in case callee raises.
     jit_save_pc(jit, REG0);
 
-    if (push_frame) {
-        if (block) {
-            // Change cfp->block_code in the current frame. See vm_caller_setup_arg_block().
-            // VM_CFP_TO_CAPTURED_BLCOK does &cfp->self, rb_captured_block->code.iseq aliases
-            // with cfp->block_code.
-            jit_mov_gc_ptr(jit, cb, REG0, (VALUE)block);
-            mov(cb, member_opnd(REG_CFP, rb_control_frame_t, block_code), REG0);
-        }
-
-        // Increment the stack pointer by 3 (in the callee)
-        // sp += 3
-        lea(cb, REG0, ctx_sp_opnd(ctx, sizeof(VALUE) * 3));
-
-        // Write method entry at sp[-3]
-        // sp[-3] = me;
-        // Put compile time cme into REG1. It's assumed to be valid because we are notified when
-        // any cme we depend on become outdated. See rb_yjit_method_lookup_change().
-        jit_mov_gc_ptr(jit, cb, REG1, (VALUE)cme);
-        mov(cb, mem_opnd(64, REG0, 8 * -3), REG1);
-
-        // Write block handler at sp[-2]
-        // sp[-2] = block_handler;
-        if (block) {
-            // reg1 = VM_BH_FROM_ISEQ_BLOCK(VM_CFP_TO_CAPTURED_BLOCK(reg_cfp));
-            lea(cb, REG1, member_opnd(REG_CFP, rb_control_frame_t, self));
-            or(cb, REG1, imm_opnd(1));
-            mov(cb, mem_opnd(64, REG0, 8 * -2), REG1);
-        }
-        else {
-            mov(cb, mem_opnd(64, REG0, 8 * -2), imm_opnd(VM_BLOCK_HANDLER_NONE));
-        }
-
-        // Write env flags at sp[-1]
-        // sp[-1] = frame_type;
-        uint64_t frame_type = VM_FRAME_MAGIC_CFUNC | VM_FRAME_FLAG_CFRAME | VM_ENV_FLAG_LOCAL;
-        mov(cb, mem_opnd(64, REG0, 8 * -1), imm_opnd(frame_type));
-
-        // Allocate a new CFP (ec->cfp--)
-        sub(
-            cb,
-            member_opnd(REG_EC, rb_execution_context_t, cfp),
-            imm_opnd(sizeof(rb_control_frame_t))
-        );
-
-        // Setup the new frame
-        // *cfp = (const struct rb_control_frame_struct) {
-        //    .pc         = 0,
-        //    .sp         = sp,
-        //    .iseq       = 0,
-        //    .self       = recv,
-        //    .ep         = sp - 1,
-        //    .block_code = 0,
-        //    .__bp__     = sp,
-        // };
-        mov(cb, REG1, member_opnd(REG_EC, rb_execution_context_t, cfp));
-        mov(cb, member_opnd(REG1, rb_control_frame_t, pc), imm_opnd(0));
-        mov(cb, member_opnd(REG1, rb_control_frame_t, sp), REG0);
-        mov(cb, member_opnd(REG1, rb_control_frame_t, iseq), imm_opnd(0));
-        mov(cb, member_opnd(REG1, rb_control_frame_t, block_code), imm_opnd(0));
-        mov(cb, member_opnd(REG1, rb_control_frame_t, __bp__), REG0);
-        sub(cb, REG0, imm_opnd(sizeof(VALUE)));
-        mov(cb, member_opnd(REG1, rb_control_frame_t, ep), REG0);
-        mov(cb, REG0, recv);
-        mov(cb, member_opnd(REG1, rb_control_frame_t, self), REG0);
+    if (block) {
+        // Change cfp->block_code in the current frame. See vm_caller_setup_arg_block().
+        // VM_CFP_TO_CAPTURED_BLCOK does &cfp->self, rb_captured_block->code.iseq aliases
+        // with cfp->block_code.
+        jit_mov_gc_ptr(jit, cb, REG0, (VALUE)block);
+        mov(cb, member_opnd(REG_CFP, rb_control_frame_t, block_code), REG0);
     }
+
+    // Increment the stack pointer by 3 (in the callee)
+    // sp += 3
+    lea(cb, REG0, ctx_sp_opnd(ctx, sizeof(VALUE) * 3));
+
+    // Write method entry at sp[-3]
+    // sp[-3] = me;
+    // Put compile time cme into REG1. It's assumed to be valid because we are notified when
+    // any cme we depend on become outdated. See rb_yjit_method_lookup_change().
+    jit_mov_gc_ptr(jit, cb, REG1, (VALUE)cme);
+    mov(cb, mem_opnd(64, REG0, 8 * -3), REG1);
+
+    // Write block handler at sp[-2]
+    // sp[-2] = block_handler;
+    if (block) {
+        // reg1 = VM_BH_FROM_ISEQ_BLOCK(VM_CFP_TO_CAPTURED_BLOCK(reg_cfp));
+        lea(cb, REG1, member_opnd(REG_CFP, rb_control_frame_t, self));
+        or(cb, REG1, imm_opnd(1));
+        mov(cb, mem_opnd(64, REG0, 8 * -2), REG1);
+    }
+    else {
+        mov(cb, mem_opnd(64, REG0, 8 * -2), imm_opnd(VM_BLOCK_HANDLER_NONE));
+    }
+
+    // Write env flags at sp[-1]
+    // sp[-1] = frame_type;
+    uint64_t frame_type = VM_FRAME_MAGIC_CFUNC | VM_FRAME_FLAG_CFRAME | VM_ENV_FLAG_LOCAL;
+    mov(cb, mem_opnd(64, REG0, 8 * -1), imm_opnd(frame_type));
+
+    // Allocate a new CFP (ec->cfp--)
+    sub(
+        cb,
+        member_opnd(REG_EC, rb_execution_context_t, cfp),
+        imm_opnd(sizeof(rb_control_frame_t))
+    );
+
+    // Setup the new frame
+    // *cfp = (const struct rb_control_frame_struct) {
+    //    .pc         = 0,
+    //    .sp         = sp,
+    //    .iseq       = 0,
+    //    .self       = recv,
+    //    .ep         = sp - 1,
+    //    .block_code = 0,
+    //    .__bp__     = sp,
+    // };
+    mov(cb, REG1, member_opnd(REG_EC, rb_execution_context_t, cfp));
+    mov(cb, member_opnd(REG1, rb_control_frame_t, pc), imm_opnd(0));
+    mov(cb, member_opnd(REG1, rb_control_frame_t, sp), REG0);
+    mov(cb, member_opnd(REG1, rb_control_frame_t, iseq), imm_opnd(0));
+    mov(cb, member_opnd(REG1, rb_control_frame_t, block_code), imm_opnd(0));
+    mov(cb, member_opnd(REG1, rb_control_frame_t, __bp__), REG0);
+    sub(cb, REG0, imm_opnd(sizeof(VALUE)));
+    mov(cb, member_opnd(REG1, rb_control_frame_t, ep), REG0);
+    mov(cb, REG0, recv);
+    mov(cb, member_opnd(REG1, rb_control_frame_t, self), REG0);
 
     // Verify that we are calling the right function
     if (YJIT_CHECK_MODE > 0) {
