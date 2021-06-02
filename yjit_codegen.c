@@ -2306,15 +2306,12 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
     x86opnd_t stack_ret = ctx_stack_push(ctx, TYPE_UNKNOWN);
     mov(cb, stack_ret, RAX);
 
-    // If this function needs a Ruby stack frame
-    if (push_frame) {
-        // Pop the stack frame (ec->cfp++)
-        add(
-            cb,
-            member_opnd(REG_EC, rb_execution_context_t, cfp),
-            imm_opnd(sizeof(rb_control_frame_t))
-        );
-    }
+    // Pop the stack frame (ec->cfp++)
+    add(
+        cb,
+        member_opnd(REG_EC, rb_execution_context_t, cfp),
+        imm_opnd(sizeof(rb_control_frame_t))
+    );
 
     // Note: gen_oswb_iseq() jumps to the next instruction with ctx->sp_offset == 0
     // after the call, while this does not. This difference prevents
