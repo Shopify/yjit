@@ -443,7 +443,10 @@ struct rb_iseq_constant_body {
     unsigned int stack_max; /* for stack overflow check */
 
     char catch_except_p; /* If a frame of this ISeq may catch exception, set TRUE */
-    bool builtin_inline_p; // This ISeq's builtin func is safe to be inlined by MJIT
+    // If true, this ISeq is leaf *and* backtraces are not used, for example,
+    // by rb_profile_frames. We verify only leafness on VM_CHECK_MODE though.
+    // For more details, see: https://bugs.ruby-lang.org/issues/16956
+    bool builtin_inline_p;
     struct rb_id_table *outer_variables;
 
 #if USE_MJIT
@@ -951,6 +954,10 @@ struct rb_ext_config {
 
 typedef struct rb_ractor_struct rb_ractor_t;
 
+#if defined(__linux__) || defined(__FreeBSD__)
+# define RB_THREAD_T_HAS_NATIVE_ID
+#endif
+
 typedef struct rb_thread_struct {
     struct list_node lt_node; // managed by a ractor
     VALUE self;
@@ -972,6 +979,9 @@ typedef struct rb_thread_struct {
     rb_nativethread_id_t thread_id;
 #ifdef NON_SCALAR_THREAD_ID
     rb_thread_id_string_t thread_id_string;
+#endif
+#ifdef RB_THREAD_T_HAS_NATIVE_ID
+    int tid;
 #endif
     BITFIELD(enum rb_thread_status, status, 2);
     /* bit flags */

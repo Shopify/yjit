@@ -5422,12 +5422,14 @@ add_ensure_range(rb_iseq_t *iseq, struct ensure_range *erange,
 static bool
 can_add_ensure_iseq(const rb_iseq_t *iseq)
 {
-    if (ISEQ_COMPILE_DATA(iseq)->in_rescue && ISEQ_COMPILE_DATA(iseq)->ensure_node_stack) {
-        return false;
+    struct iseq_compile_data_ensure_node_stack *e;
+    if (ISEQ_COMPILE_DATA(iseq)->in_rescue && (e = ISEQ_COMPILE_DATA(iseq)->ensure_node_stack) != NULL) {
+        while (e) {
+            if (e->ensure_node) return false;
+            e = e->prev;
+        }
     }
-    else {
-        return true;
-    }
+    return true;
 }
 
 static void
@@ -10781,7 +10783,6 @@ ibf_load_code(const struct ibf_load *load, rb_iseq_t *iseq, ibf_offset_t bytecod
         for (op_index=0; types[op_index]; op_index++, code_index++) {
             char type = types[op_index];
             switch (type) {
-              case TS_CDHASH:
               case TS_VALUE:
                 {
                     VALUE op = ibf_load_small_value(load, &reading_pos);
@@ -10791,6 +10792,20 @@ ibf_load_code(const struct ibf_load *load, rb_iseq_t *iseq, ibf_offset_t bytecod
                         RB_OBJ_WRITTEN(iseqv, Qundef, v);
                         FL_SET(iseqv, ISEQ_MARKABLE_ISEQ);
                     }
+                    break;
+                }
+              case TS_CDHASH:
+                {
+                    VALUE op = ibf_load_small_value(load, &reading_pos);
+                    VALUE v = ibf_load_object(load, op);
+                    v = rb_hash_dup(v); // hash dumped as frozen
+                    RHASH_TBL_RAW(v)->type = &cdhash_type;
+                    rb_hash_rehash(v); // hash function changed
+                    freeze_hide_obj(v);
+
+                    code[code_index] = v;
+                    RB_OBJ_WRITTEN(iseqv, Qundef, v);
+                    FL_SET(iseqv, ISEQ_MARKABLE_ISEQ);
                     break;
                 }
               case TS_ISEQ:
