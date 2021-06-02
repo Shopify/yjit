@@ -2455,14 +2455,22 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
     yjit_check_ints(cb, side_exit);
 
     const struct rb_builtin_function *leaf_builtin = rb_leaf_builtin_function(iseq);
-    if (leaf_builtin) {
+
+    if (leaf_builtin && !block && leaf_builtin->argc + 1 <= NUM_C_ARG_REGS) {
+        // TODO: figure out if this is necessary
+        // If the calls don't allocate, do they need up to date PC, SP?
         // Save YJIT registers
         yjit_save_regs(cb);
 
+        // Get a pointer to the top of the stack
+        lea(cb, REG0, ctx_stack_opnd(ctx, 0));
+
         // Call the builtin func (ec, recv, arg1, arg2, ...)
         mov(cb, C_ARG_REGS[0], REG_EC);
+
+        // Copy self and arguments
         for (int32_t i = 0; i < leaf_builtin->argc + 1; i++) {
-            x86opnd_t stack_opnd = mem_opnd(64, REG_SP, -(leaf_builtin->argc - i) * SIZEOF_VALUE);
+            x86opnd_t stack_opnd = mem_opnd(64, REG0, -(leaf_builtin->argc - i) * SIZEOF_VALUE);
             x86opnd_t c_arg_reg = C_ARG_REGS[i + 1];
             mov(cb, c_arg_reg, stack_opnd);
         }
