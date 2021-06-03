@@ -45,20 +45,14 @@ IPAddr:: Provides methods to manipulate IPv4 and IPv6 IP addresses
 IRB:: Interactive Ruby command-line tool for REPL (Read Eval Print Loop)
 OptionParser:: Ruby-oriented class for command-line option analysis
 Logger:: Provides a simple logging utility for outputting messages
-Matrix:: Represents a mathematical matrix.
 Mutex_m:: Mixin to extend objects to be handled like a Mutex
-Net::FTP:: Support for the File Transfer Protocol
 Net::HTTP:: HTTP client api for Ruby
-Net::IMAP:: Ruby client api for Internet Message Access Protocol
-Net::POP3:: Ruby client library for POP3
-Net::SMTP:: Simple Mail Transfer Protocol client library for Ruby
 Observable:: Provides a mechanism for publish/subscribe pattern in Ruby
 Open3:: Provides access to stdin, stdout and stderr when running other programs
 OpenStruct:: Class to build custom data structures, similar to a Hash
 OpenURI:: An easy-to-use wrapper for Net::HTTP, Net::HTTPS and Net::FTP
 PP:: Provides a PrettyPrinter for Ruby objects
 PrettyPrinter:: Implements a pretty printing algorithm for readable structure
-Prime:: Prime numbers and factorization library
 PStore:: Implements a file based persistence mechanism based on a Hash
 Resolv::  Thread-aware DNS resolver library in Ruby
 resolv-replace.rb:: Replace Socket DNS with Resolv
@@ -111,5 +105,11 @@ Rake:: Ruby build program with capabilities similar to make
 Test::Unit:: A compatibility layer for MiniTest
 REXML:: An XML toolkit for Ruby
 RSS:: Family of libraries that support various formats of XML "feeds"
+Net::FTP:: Support for the File Transfer Protocol
+Net::IMAP:: Ruby client api for Internet Message Access Protocol
+Net::POP3:: Ruby client library for POP3
+Net::SMTP:: Simple Mail Transfer Protocol client library for Ruby
+Matrix:: Represents a mathematical matrix.
+Prime:: Prime numbers and factorization library
 RBS:: RBS is a language to describe the structure of Ruby programs
 TypeProf:: A type analysis tool for Ruby code based on abstract interpretation

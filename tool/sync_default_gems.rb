@@ -16,7 +16,6 @@ REPOSITORIES = {
   "io-nonblock": 'ruby/io-nonblock',
   "io-wait": 'ruby/io-wait',
   csv: 'ruby/csv',
-  dbm: 'ruby/dbm',
   etc: 'ruby/etc',
   date: 'ruby/date',
   zlib: 'ruby/zlib',
@@ -24,8 +23,6 @@ REPOSITORIES = {
   strscan: 'ruby/strscan',
   ipaddr: 'ruby/ipaddr',
   logger: 'ruby/logger',
-  prime: 'ruby/prime',
-  matrix: 'ruby/matrix',
   ostruct: 'ruby/ostruct',
   irb: 'ruby/irb',
   forwardable: "ruby/forwardable",
@@ -37,8 +34,6 @@ REPOSITORIES = {
   pstore: "ruby/pstore",
   delegate: "ruby/delegate",
   benchmark: "ruby/benchmark",
-  "net-pop": "ruby/net-pop",
-  "net-smtp": "ruby/net-smtp",
   cgi: "ruby/cgi",
   readline: "ruby/readline",
   "readline-ext": "ruby/readline-ext",
@@ -53,8 +48,6 @@ REPOSITORIES = {
   tmpdir: "ruby/tmpdir",
   English: "ruby/English",
   "net-protocol": "ruby/net-protocol",
-  "net-imap": "ruby/net-imap",
-  "net-ftp": "ruby/net-ftp",
   "net-http": "ruby/net-http",
   bigdecimal: "ruby/bigdecimal",
   optparse: "ruby/optparse",
@@ -96,7 +89,7 @@ def sync_default_gems(gem)
     cp_r(Dir.glob("#{upstream}/bundler/exe/bundle*"), "libexec")
 
     gemspec_content = File.readlines("#{upstream}/bundler/bundler.gemspec").map do |line|
-      next if line =~ /extra_rdoc_files/
+      next if line =~ /LICENSE\.md/
 
       line.gsub("bundler.gemspec", "lib/bundler/bundler.gemspec").gsub('"exe"', '"libexec"')
     end.compact.join
@@ -248,32 +241,11 @@ def sync_default_gems(gem)
     cp_r("#{upstream}/openssl.gemspec", "ext/openssl")
     cp_r("#{upstream}/History.md", "ext/openssl")
     `git checkout ext/openssl/depend`
-  when "net-pop"
-    rm_rf(%w[lib/net/pop.rb lib/net/net-pop.gemspec test/net/pop])
-    cp_r("#{upstream}/lib/net/pop.rb", "lib/net")
-    cp_r("#{upstream}/test/net/pop", "test/net")
-    cp_r("#{upstream}/net-pop.gemspec", "lib/net")
-  when "net-smtp"
-    rm_rf(%w[lib/net/smtp.rb lib/net/net-smtp.gemspec test/net/smtp])
-    cp_r("#{upstream}/lib/net/smtp.rb", "lib/net")
-    cp_r("#{upstream}/test/net/smtp", "test/net")
-    cp_r("#{upstream}/net-smtp.gemspec", "lib/net")
   when "net-protocol"
     rm_rf(%w[lib/net/protocol.rb lib/net/net-protocol.gemspec test/net/protocol])
     cp_r("#{upstream}/lib/net/protocol.rb", "lib/net")
     cp_r("#{upstream}/test/net/protocol", "test/net")
     cp_r("#{upstream}/net-protocol.gemspec", "lib/net")
-  when "net-imap"
-    rm_rf(%w[lib/net/imap.rb lib/net/imap test/net/imap])
-    cp_r("#{upstream}/lib/net/imap.rb", "lib/net")
-    cp_r("#{upstream}/lib/net/imap", "lib/net")
-    cp_r("#{upstream}/test/net/imap", "test/net")
-    cp_r("#{upstream}/net-imap.gemspec", "lib/net/imap")
-  when "net-ftp"
-    rm_rf(%w[lib/net/ftp.rb lib/net/net-ftp.gemspec test/net/ftp])
-    cp_r("#{upstream}/lib/net/ftp.rb", "lib/net")
-    cp_r("#{upstream}/test/net/ftp", "test/net")
-    cp_r("#{upstream}/net-ftp.gemspec", "lib/net")
   when "net-http"
     rm_rf(%w[lib/net/http.rb lib/net/http test/net/http])
     cp_r("#{upstream}/lib/net/http.rb", "lib/net")
@@ -331,7 +303,7 @@ def sync_default_gems(gem)
   when "digest"
     rm_rf(%w[ext/digest test/digest])
     cp_r("#{upstream}/ext/digest", "ext")
-    mkdir_p("#{upstream}/ext/digest/lib")
+    mkdir_p("ext/digest/lib")
     cp_r("#{upstream}/lib/digest.rb", "ext/digest/lib/")
     cp_r("#{upstream}/test/digest", "test")
     cp_r("#{upstream}/digest.gemspec", "ext/digest")

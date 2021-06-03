@@ -683,7 +683,7 @@ typedef struct rb_heap_struct {
     struct list_head pages;
     struct heap_page *sweeping_page; /* iterator for .pages */
     struct heap_page *compact_cursor;
-    size_t compact_cursor_index;
+    RVALUE * compact_cursor_index;
 #if GC_ENABLE_INCREMENTAL_MARK
     struct heap_page *pooled_pages;
 #endif
@@ -3635,7 +3635,7 @@ objspace_each_objects(rb_objspace_t *objspace, each_obj_callback *callback, void
     }
 
     /* Create pages buffer */
-    size_t size = size_mul_or_raise(heap_allocated_pages, sizeof(struct heap_page *), rb_eRuntimeError);
+    size_t size = size_mul_or_raise(heap_eden->total_pages, sizeof(struct heap_page *), rb_eRuntimeError);
     struct heap_page **pages = malloc(size);
     if (!pages) rb_memerror();
 
@@ -3650,7 +3650,7 @@ objspace_each_objects(rb_objspace_t *objspace, each_obj_callback *callback, void
         pages[pages_count] = page;
         pages_count++;
     }
-    GC_ASSERT(pages_count <= heap_allocated_pages);
+    GC_ASSERT(pages_count == heap_eden->total_pages);
 
     /* Run the callback */
     struct each_obj_data each_obj_data = {
@@ -4895,11 +4895,48 @@ unlock_page_body(rb_objspace_t *objspace, struct heap_page_body *body)
     }
 }
 
+static inline bool
+try_move_in_plane(rb_objspace_t *objspace, rb_heap_t *heap, intptr_t p, bits_t bits, VALUE dest)
+{
+    if (bits) {
+        do {
+            if (bits & 1) {
+                /* We're trying to move "p" */
+                objspace->rcompactor.considered_count_table[BUILTIN_TYPE((VALUE)p)]++;
+
+                if (gc_is_moveable_obj(objspace, (VALUE)p)) {
+                    /* We were able to move "p" */
+                    objspace->rcompactor.moved_count_table[BUILTIN_TYPE((VALUE)p)]++;
+                    objspace->rcompactor.total_moved++;
+
+                    bool from_freelist = false;
+
+                    if (BUILTIN_TYPE(dest) == T_NONE) {
+                        from_freelist = true;
+                    }
+
+                    gc_move(objspace, (VALUE)p, dest);
+                    gc_pin(objspace, (VALUE)p);
+                    heap->compact_cursor_index = (RVALUE *)p;
+                    if (from_freelist) {
+                        FL_SET((VALUE)p, FL_FROM_FREELIST);
+                    }
+
+                    return true;
+                }
+            }
+            p += sizeof(RVALUE);
+            bits >>= 1;
+        } while (bits);
+    }
+
+    return false;
+}
+
 static short
 try_move(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_page, VALUE dest)
 {
     struct heap_page * cursor = heap->compact_cursor;
-    char from_freelist = 0;
 
     GC_ASSERT(!MARKED_IN_BITMAP(GET_HEAP_MARK_BITS(dest), dest));
 
@@ -4907,49 +4944,39 @@ try_move(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_page,
      * T_NONE, it is an object that just got freed but hasn't been
      * added to the freelist yet */
 
-    if (BUILTIN_TYPE(dest) == T_NONE) {
-        from_freelist = 1;
-    }
-
     while(1) {
-        size_t index = heap->compact_cursor_index;
+        size_t index;
 
         bits_t *mark_bits = cursor->mark_bits;
         bits_t *pin_bits = cursor->pinned_bits;
-        RVALUE * p = cursor->start;
-        RVALUE * offset = p - NUM_IN_PAGE(p);
+        RVALUE * p;
+
+        if (heap->compact_cursor_index) {
+            index = BITMAP_INDEX(heap->compact_cursor_index);
+            p = heap->compact_cursor_index;
+            GC_ASSERT(cursor == GET_HEAP_PAGE(p));
+        } else {
+            index = 0;
+            p = cursor->start;
+        }
+
+        bits_t bits = mark_bits[index] & ~pin_bits[index];
+
+        bits >>= NUM_IN_PAGE(p);
+        if (try_move_in_plane(objspace, heap, (intptr_t)p, bits, dest)) return 1;
+
+        if (index == 0) {
+            p = cursor->start + (BITS_BITLENGTH - NUM_IN_PAGE(cursor->start));
+        } else {
+            p = cursor->start + (BITS_BITLENGTH - NUM_IN_PAGE(cursor->start)) + (BITS_BITLENGTH * index);
+        }
 
         /* Find an object to move and move it. Movable objects must be
          * marked, so we iterate using the marking bitmap */
-        for (size_t i = index; i < HEAP_PAGE_BITMAP_LIMIT; i++) {
+        for (size_t i = index + 1; i < HEAP_PAGE_BITMAP_LIMIT; i++) {
             bits_t bits = mark_bits[i] & ~pin_bits[i];
-
-            if (bits) {
-                p = offset + i * BITS_BITLENGTH;
-
-                do {
-                    if (bits & 1) {
-                        /* We're trying to move "p" */
-                        objspace->rcompactor.considered_count_table[BUILTIN_TYPE((VALUE)p)]++;
-
-                        if (gc_is_moveable_obj(objspace, (VALUE)p)) {
-                            /* We were able to move "p" */
-                            objspace->rcompactor.moved_count_table[BUILTIN_TYPE((VALUE)p)]++;
-                            objspace->rcompactor.total_moved++;
-                            gc_move(objspace, (VALUE)p, dest);
-                            gc_pin(objspace, (VALUE)p);
-                            heap->compact_cursor_index = i;
-                            if (from_freelist) {
-                                FL_SET((VALUE)p, FL_FROM_FREELIST);
-                            }
-
-                            return 1;
-                        }
-                    }
-                    p++;
-                    bits >>= 1;
-                } while (bits);
-            }
+            if (try_move_in_plane(objspace, heap, (intptr_t)p, bits, dest)) return 1;
+            p += BITS_BITLENGTH;
         }
 
         /* We couldn't find a movable object on the compact cursor, so lets
@@ -5164,13 +5191,13 @@ gc_compact_finish(rb_objspace_t *objspace, rb_heap_t *heap)
     objspace->flags.during_compacting = FALSE;
 }
 
-static int
+static bool
 gc_fill_swept_page(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_page, int *freed_slots, int *empty_slots)
 {
     /* Find any pinned but not marked objects and try to fill those slots */
     int i;
     int moved_slots = 0;
-    int finished_compacting = 0;
+    bool finished_compacting = false;
     bits_t *mark_bits, *pin_bits;
     bits_t bitset;
     RVALUE *p, *offset;
@@ -5215,7 +5242,7 @@ gc_fill_swept_page(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *s
                          * their memory until they have their finalizers run.*/
                         if (BUILTIN_TYPE(dest) != T_ZOMBIE) {
                             if(!try_move(objspace, heap, sweep_page, dest)) {
-                                finished_compacting = 1;
+                                finished_compacting = true;
                                 (void)VALGRIND_MAKE_MEM_UNDEFINED((void*)p, sizeof(RVALUE));
                                 gc_report(5, objspace, "Quit compacting, couldn't find an object to move\n");
                                 if (BUILTIN_TYPE(dest) == T_NONE) {

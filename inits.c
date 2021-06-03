@@ -98,6 +98,7 @@ rb_call_builtin_inits(void)
     BUILTIN(kernel);
     BUILTIN(timev);
     BUILTIN(yjit);
+    BUILTIN(nilclass);
     Init_builtin_prelude();
 }
 #undef CALL
