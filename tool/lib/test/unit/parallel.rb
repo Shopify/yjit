@@ -52,7 +52,7 @@ module Test
         # Thread for making sure the parallel worker is not stuck on one test
         # for too long.
         @timer_thread = Thread.new do
-          timeout = 60 * 60 # 50 minutes
+          timeout = 60 * 60 # 60 minutes
           while true
             slept_for = sleep(timeout)
             if slept_for >= timeout
