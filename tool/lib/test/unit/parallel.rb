@@ -52,14 +52,11 @@ module Test
         # Thread for making sure the parallel worker is not stuck on one test
         # for too long.
         @timer_thread = Thread.new do
-          timeout = 60 * 60 # 60 minutes
+          timeout = 12 * 60 # 12 minutes
           while true
             slept_for = sleep(timeout)
             if slept_for >= timeout
-              # _report() doesn't print anything in the CI output
-              # It would be useful to know which test in failing
-              #_report("p", "Spent #{timeout}s running #{@current_test}\n")
-              puts("Spent #{timeout}s running #{@current_test}\n")
+              _report("p", "Spent #{timeout}s running #{@current_test}\n")
               exit 2
             end
           end
