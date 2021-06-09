@@ -8,6 +8,7 @@
 #include "yjit_utils.h"
 #include "yjit_iface.h"
 #include "yjit_core.h"
+#include "yjit_backend.h"
 #include "yjit_codegen.h"
 
 /*
@@ -965,5 +966,8 @@ invalidate_block_version(block_t* block)
 void
 yjit_init_core(void)
 {
+    if (rb_yjit_opts.test_backend)
+        test_backend();
+
     // Nothing yet
 }
