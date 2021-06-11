@@ -1975,7 +1975,7 @@ gen_opt_not(jitstate_t* jit, ctx_t* ctx)
     VALUE comptime_val = jit_peek_at_stack(jit, ctx, 0);
 
     // For the true/false case
-    if (comptime_val == Qtrue || comptime_val == Qfalse) {
+    if (comptime_val == Qtrue || comptime_val == Qfalse || comptime_val == Qnil) {
 
         // Get the operand from the stack
         x86opnd_t arg = ctx_stack_pop(ctx, 1);
@@ -1990,6 +1990,11 @@ gen_opt_not(jitstate_t* jit, ctx_t* ctx)
         // Qfalse => Qtrue
         mov(cb, REG0, imm_opnd(Qtrue));
         cmp(cb, arg, imm_opnd(Qfalse));
+        je_label(cb, DONE);
+
+        // Qnil => Qtrue
+        mov(cb, REG0, imm_opnd(Qtrue));
+        cmp(cb, arg, imm_opnd(Qnil));
         je_label(cb, DONE);
 
         // For any other values, we side-exit
