@@ -1,3 +1,21 @@
+# Test for topn
+assert_equal 'array', %q{
+  def threequals(a)
+    case a
+    when Array
+      "array"
+    when Hash
+      "hash"
+    else
+      "unknown"
+    end
+  end
+
+  threequals([])
+  threequals([])
+  threequals([])
+}
+
 # Test for opt_mod
 assert_equal '2', %q{
   def mod(a, b)
@@ -926,4 +944,112 @@ assert_equal '[Proc, 1, 2, 3, Proc]', %q{
   use_zero
 
   [use_zero] + use_three
+}
+
+# test building empty array
+assert_equal '[]', %q{
+  def build_arr
+    []
+  end
+
+  build_arr
+  build_arr
+}
+
+# test building array of one element
+assert_equal '[5]', %q{
+  def build_arr(val)
+    [val]
+  end
+
+  build_arr(5)
+  build_arr(5)
+}
+
+# test building array of several element
+assert_equal '[5, 5, 5, 5, 5]', %q{
+  def build_arr(val)
+    [val, val, val, val, val]
+  end
+
+  build_arr(5)
+  build_arr(5)
+}
+
+# test building empty hash
+assert_equal '{}', %q{
+  def build_hash
+    {}
+  end
+
+  build_hash
+  build_hash
+}
+
+# test building hash with values
+assert_equal '{:foo=>:bar}', %q{
+  def build_hash(val)
+    { foo: val }
+  end
+
+  build_hash(:bar)
+  build_hash(:bar)
+}
+
+# test string interpolation with known types
+assert_equal 'foobar', %q{
+  def make_str
+    foo = -"foo"
+    bar = -"bar"
+    "#{foo}#{bar}"
+  end
+
+  make_str
+  make_str
+}
+
+# test string interpolation with unknown types
+assert_equal 'foobar', %q{
+  def make_str(foo, bar)
+    "#{foo}#{bar}"
+  end
+
+  make_str("foo", "bar")
+  make_str("foo", "bar")
+}
+
+# test string interpolation with known non-strings
+assert_equal 'foo123', %q{
+  def make_str
+    foo = -"foo"
+    bar = 123
+    "#{foo}#{bar}"
+  end
+
+  make_str
+  make_str
+}
+
+# test string interpolation with unknown non-strings
+assert_equal 'foo123', %q{
+  def make_str(foo, bar)
+    "#{foo}#{bar}"
+  end
+
+  make_str("foo", 123)
+  make_str("foo", 123)
+}
+
+# getlocal with 2 levels
+assert_equal '7', %q{
+  def foo(foo, bar)
+    while foo > 0
+      while bar > 0
+        return foo + bar
+      end
+    end
+  end
+
+  foo(5,2)
+  foo(5,2)
 }

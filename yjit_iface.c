@@ -126,19 +126,6 @@ check_cfunc_dispatch(VALUE receiver, struct rb_callinfo *ci, void *callee, rb_ca
 
 MJIT_FUNC_EXPORTED VALUE rb_hash_has_key(VALUE hash, VALUE key);
 
-bool
-cfunc_needs_frame(const rb_method_cfunc_t *cfunc)
-{
-    void* fptr = (void*)cfunc->func;
-
-    // Leaf C functions do not need a stack frame
-    // or a stack overflow check
-    return !(
-        // Hash#key?
-        fptr == (void*)rb_hash_has_key
-    );
-}
-
 // GC root for interacting with the GC
 struct yjit_root_struct {
     int unused; // empty structs are not legal in C99
@@ -1038,6 +1025,7 @@ rb_yjit_call_threshold(void)
     return rb_yjit_opts.call_threshold;
 }
 
+// Can raise RuntimeError
 void
 rb_yjit_init(struct rb_yjit_options *options)
 {
@@ -1048,9 +1036,20 @@ rb_yjit_init(struct rb_yjit_options *options)
     rb_yjit_opts = *options;
     rb_yjit_opts.yjit_enabled = true;
 
-    // Normalize command-line options
+    rb_yjit_opts.gen_stats |= !!getenv("YJIT_STATS");
+
+#if !RUBY_DEBUG
+    if(rb_yjit_opts.gen_stats) {
+        rb_raise(rb_eRuntimeError, "--yjit-stats requires that Ruby is compiled with CPPFLAGS='-DRUBY_DEBUG=1'");
+    }
+#endif
+
+    // Normalize command-line options to default values
+    if (rb_yjit_opts.exec_mem_size < 1) {
+        rb_yjit_opts.exec_mem_size = 256;
+    }
     if (rb_yjit_opts.call_threshold < 1) {
-        rb_yjit_opts.call_threshold = 2;
+        rb_yjit_opts.call_threshold = 10;
     }
     if (rb_yjit_opts.version_limit < 1) {
         rb_yjit_opts.version_limit = 4;

@@ -748,10 +748,7 @@ num_abs(VALUE num)
 static VALUE
 num_zero_p(VALUE num)
 {
-    if (rb_equal(num, INT2FIX(0))) {
-        return Qtrue;
-    }
-    return Qfalse;
+    return rb_equal(num, INT2FIX(0));
 }
 
 static VALUE
@@ -2412,11 +2409,11 @@ ruby_float_step_size(double beg, double end, double unit, int excl)
     if (unit == 0) {
         return HUGE_VAL;
     }
-    n= (end - beg)/unit;
-    err = (fabs(beg) + fabs(end) + fabs(end-beg)) / fabs(unit) * epsilon;
     if (isinf(unit)) {
 	return unit > 0 ? beg <= end : beg >= end;
     }
+    n= (end - beg)/unit;
+    err = (fabs(beg) + fabs(end) + fabs(end-beg)) / fabs(unit) * epsilon;
     if (err>0.5) err=0.5;
     if (excl) {
 	if (n<=0) return 0;
@@ -2424,10 +2421,26 @@ ruby_float_step_size(double beg, double end, double unit, int excl)
 	    n = 0;
 	else
 	    n = floor(n - err);
+        if (beg < end) {
+            if ((n+1)*unit+beg < end)
+                n++;
+        }
+        else if (beg > end) {
+            if ((n+1)*unit+beg > end)
+                n++;
+        }
     }
     else {
 	if (n<0) return 0;
 	n = floor(n + err);
+        if (beg < end) {
+            if ((n+1)*unit+beg <= end)
+                n++;
+        }
+        else if (beg > end) {
+            if ((n+1)*unit+beg >= end)
+               n++;
+        }
     }
     return n+1;
 }
@@ -4702,30 +4715,14 @@ rb_int_abs(VALUE num)
     return Qnil;
 }
 
-/*
- *  Document-method: Integer#size
- *  call-seq:
- *     int.size  ->  int
- *
- *  Returns the number of bytes in the machine representation of +int+
- *  (machine dependent).
- *
- *     1.size               #=> 8
- *     -1.size              #=> 8
- *     2147483647.size      #=> 8
- *     (256**10 - 1).size   #=> 10
- *     (256**20 - 1).size   #=> 20
- *     (256**40 - 1).size   #=> 40
- */
-
 static VALUE
 fix_size(VALUE fix)
 {
     return INT2FIX(sizeof(long));
 }
 
-static VALUE
-int_size(VALUE num)
+MJIT_FUNC_EXPORTED VALUE
+rb_int_size(VALUE num)
 {
     if (FIXNUM_P(num)) {
 	return fix_size(num);
@@ -5445,7 +5442,6 @@ Init_Numeric(void)
     rb_define_method(rb_cInteger, "<<", rb_int_lshift, 1);
     rb_define_method(rb_cInteger, ">>", rb_int_rshift, 1);
 
-    rb_define_method(rb_cInteger, "size", int_size, 0);
     rb_define_method(rb_cInteger, "digits", rb_int_digits, -1);
 
     /* An obsolete class, use Integer */

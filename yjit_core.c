@@ -10,10 +10,6 @@
 #include "yjit_core.h"
 #include "yjit_codegen.h"
 
-// Maximum number of specialized block versions per block
-// Zero means generic versions only
-#define MAX_VERSIONS 3
-
 /*
 Get an operand for the adjusted stack pointer address
 */
@@ -815,6 +811,19 @@ yjit_free_block(block_t *block)
 {
     yjit_unlink_method_lookup_dependency(block);
     yjit_block_assumptions_free(block);
+
+    // Remove this block from the predecessor's targets
+    rb_darray_for(block->incoming, incoming_idx) {
+        // Branch from the predecessor to us
+        branch_t* pred_branch = rb_darray_get(block->incoming, incoming_idx);
+
+        // If this is us, nullify the target block
+        for (size_t succ_idx = 0; succ_idx < 2; succ_idx++) {
+            if (pred_branch->blocks[succ_idx] == block) {
+                pred_branch->blocks[succ_idx] = NULL;
+            }
+        }
+    }
 
     // For each outgoing branch
     rb_darray_for(block->outgoing, branch_idx) {

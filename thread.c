@@ -3402,6 +3402,40 @@ rb_thread_setname(VALUE thread, VALUE name)
     return name;
 }
 
+#if USE_NATIVE_THREAD_NATIVE_THREAD_ID
+/*
+ * call-seq:
+ *   thr.native_thread_id   -> integer
+ *
+ * Return the native thread ID which is used by the Ruby thread.
+ *
+ * The ID depends on the OS. (not POSIX thread ID returned by pthread_self(3))
+ * * On Linux it is TID returned by gettid(2).
+ * * On macOS it is the system-wide unique integral ID of thread returned
+ *   by pthread_threadid_np(3).
+ * * On FreeBSD it is the unique integral ID of the thread returned by
+ *   pthread_getthreadid_np(3).
+ * * On Windows it is the thread identifier returned by GetThreadId().
+ * * On other platforms, it raises NotImplementedError.
+ *
+ * NOTE:
+ * If the thread is not associated yet or already deassociated with a native
+ * thread, it returns _nil_.
+ * If the Ruby implementation uses M:N thread model, the ID may change
+ * depending on the timing.
+ */
+
+static VALUE
+rb_thread_native_thread_id(VALUE thread)
+{
+    rb_thread_t *target_th = rb_thread_ptr(thread);
+    if (rb_threadptr_dead(target_th)) return Qnil;
+    return native_thread_native_thread_id(target_th);
+}
+#else
+# define rb_thread_native_thread_id rb_f_notimplement
+#endif
+
 /*
  * call-seq:
  *   thr.to_s -> string
@@ -4374,13 +4408,13 @@ int
 rb_thread_wait_for_single_fd(int fd, int events, struct timeval *timeout)
 {
     struct pollfd fds[2];
-    int result = 0, lerrno;
-    rb_hrtime_t *to, rel, end = 0;
+    int result = 0;
     int drained;
     nfds_t nfds;
     rb_unblock_function_t *ubf;
     struct waiting_fd wfd;
     int state;
+    volatile int lerrno;
 
     wfd.th = GET_THREAD();
     wfd.fd = fd;
@@ -4393,6 +4427,7 @@ rb_thread_wait_for_single_fd(int fd, int events, struct timeval *timeout)
 
     EC_PUSH_TAG(wfd.th->ec);
     if ((state = EC_EXEC_TAG()) == TAG_NONE) {
+        rb_hrtime_t *to, rel, end = 0;
         RUBY_VM_CHECK_INTS_BLOCKING(wfd.th->ec);
         timeout_prepare(&to, &rel, &end, timeout);
         fds[0].fd = fd;
@@ -5494,6 +5529,7 @@ Init_Thread(void)
 
     rb_define_method(rb_cThread, "name", rb_thread_getname, 0);
     rb_define_method(rb_cThread, "name=", rb_thread_setname, 1);
+    rb_define_method(rb_cThread, "native_thread_id", rb_thread_native_thread_id, 0);
     rb_define_method(rb_cThread, "to_s", rb_thread_to_s, 0);
     rb_define_alias(rb_cThread, "inspect", "to_s");
 

@@ -1383,11 +1383,7 @@ update_catch_except_flags(struct rb_iseq_constant_body *body)
        BREAK/NEXT/REDO catch table entries are used only when `throw` insn is used in the block. */
     pos = 0;
     while (pos < body->iseq_size) {
-#if OPT_DIRECT_THREADED_CODE || OPT_CALL_THREADED_CODE
-        insn = rb_vm_insn_addr2insn((void *)body->iseq_encoded[pos]);
-#else
-        insn = (int)body->iseq_encoded[pos];
-#endif
+        insn = rb_vm_insn_decode(body->iseq_encoded[pos]);
         if (insn == BIN(throw)) {
             set_catch_except_p(body);
             break;
@@ -1971,8 +1967,8 @@ iseq_set_local_table(rb_iseq_t *iseq, const ID *tbl)
     return COMPILE_OK;
 }
 
-static int
-cdhash_cmp(VALUE val, VALUE lit)
+int
+rb_iseq_cdhash_cmp(VALUE val, VALUE lit)
 {
     int tval, tlit;
 
@@ -2008,20 +2004,23 @@ cdhash_cmp(VALUE val, VALUE lit)
     else if (tlit == T_RATIONAL) {
         const struct RRational *rat1 = RRATIONAL(val);
         const struct RRational *rat2 = RRATIONAL(lit);
-        return cdhash_cmp(rat1->num, rat2->num) || cdhash_cmp(rat1->den, rat2->den);
+        return rb_iseq_cdhash_cmp(rat1->num, rat2->num) || rb_iseq_cdhash_cmp(rat1->den, rat2->den);
     }
     else if (tlit == T_COMPLEX) {
         const struct RComplex *comp1 = RCOMPLEX(val);
         const struct RComplex *comp2 = RCOMPLEX(lit);
-        return cdhash_cmp(comp1->real, comp2->real) || cdhash_cmp(comp1->imag, comp2->imag);
+        return rb_iseq_cdhash_cmp(comp1->real, comp2->real) || rb_iseq_cdhash_cmp(comp1->imag, comp2->imag);
+    }
+    else if (tlit == T_REGEXP) {
+        return rb_reg_equal(val, lit) ? 0 : -1;
     }
     else {
         UNREACHABLE_RETURN(-1);
     }
 }
 
-static st_index_t
-cdhash_hash(VALUE a)
+st_index_t
+rb_iseq_cdhash_hash(VALUE a)
 {
     switch (OBJ_BUILTIN_TYPE(a)) {
       case -1:
@@ -2037,14 +2036,16 @@ cdhash_hash(VALUE a)
         return rb_rational_hash(a);
       case T_COMPLEX:
         return rb_complex_hash(a);
+      case T_REGEXP:
+        return NUM2LONG(rb_reg_hash(a));
       default:
         UNREACHABLE_RETURN(0);
     }
 }
 
 static const struct st_hash_type cdhash_type = {
-    cdhash_cmp,
-    cdhash_hash,
+    rb_iseq_cdhash_cmp,
+    rb_iseq_cdhash_hash,
 };
 
 struct cdhash_set_label_struct {
@@ -3040,13 +3041,12 @@ iseq_peephole_optimize(rb_iseq_t *iseq, LINK_ELEMENT *list, const int do_tailcal
      *
      * putobject "beg".."end"
      */
-    if (IS_INSN_ID(iobj, checkmatch)) {
-        INSN *range = (INSN *)get_prev_insn(iobj);
+    if (IS_INSN_ID(iobj, newrange)) {
+        INSN *const range = iobj;
         INSN *beg, *end;
         VALUE str_beg, str_end;
 
-	if (range && IS_INSN_ID(range, newrange) &&
-                (end = (INSN *)get_prev_insn(range)) != 0 &&
+        if ((end = (INSN *)get_prev_insn(range)) != 0 &&
                 is_frozen_putstring(end, &str_end) &&
                 (beg = (INSN *)get_prev_insn(end)) != 0 &&
                 is_frozen_putstring(beg, &str_beg)) {
@@ -4586,8 +4586,6 @@ when_vals(rb_iseq_t *iseq, LINK_ANCHOR *const cond_seq, const NODE *vals,
             rb_hash_aset(literals, lit, (VALUE)(l1) | 1);
 	}
 
-	ADD_INSN(cond_seq, val, dup); /* dup target */
-
 	if (nd_type(val) == NODE_STR) {
 	    debugp_param("nd_lit", val->nd_lit);
 	    lit = rb_fstring(val->nd_lit);
@@ -4598,7 +4596,9 @@ when_vals(rb_iseq_t *iseq, LINK_ANCHOR *const cond_seq, const NODE *vals,
 	    if (!COMPILE(cond_seq, "when cond", val)) return -1;
 	}
 
-	ADD_INSN1(cond_seq, vals, checkmatch, INT2FIX(VM_CHECKMATCH_TYPE_CASE));
+        // Emit patern === target
+        ADD_INSN1(cond_seq, vals, topn, INT2FIX(1));
+        ADD_CALL(cond_seq, vals, idEqq, INT2FIX(1));
 	ADD_INSNL(cond_seq, val, branchif, l1);
 	vals = vals->nd_next;
     }
@@ -5422,12 +5422,14 @@ add_ensure_range(rb_iseq_t *iseq, struct ensure_range *erange,
 static bool
 can_add_ensure_iseq(const rb_iseq_t *iseq)
 {
-    if (ISEQ_COMPILE_DATA(iseq)->in_rescue && ISEQ_COMPILE_DATA(iseq)->ensure_node_stack) {
-        return false;
+    struct iseq_compile_data_ensure_node_stack *e;
+    if (ISEQ_COMPILE_DATA(iseq)->in_rescue && (e = ISEQ_COMPILE_DATA(iseq)->ensure_node_stack) != NULL) {
+        while (e) {
+            if (e->ensure_node) return false;
+            e = e->prev;
+        }
     }
-    else {
-        return true;
-    }
+    return true;
 }
 
 static void
@@ -10781,7 +10783,6 @@ ibf_load_code(const struct ibf_load *load, rb_iseq_t *iseq, ibf_offset_t bytecod
         for (op_index=0; types[op_index]; op_index++, code_index++) {
             char type = types[op_index];
             switch (type) {
-              case TS_CDHASH:
               case TS_VALUE:
                 {
                     VALUE op = ibf_load_small_value(load, &reading_pos);
@@ -10791,6 +10792,20 @@ ibf_load_code(const struct ibf_load *load, rb_iseq_t *iseq, ibf_offset_t bytecod
                         RB_OBJ_WRITTEN(iseqv, Qundef, v);
                         FL_SET(iseqv, ISEQ_MARKABLE_ISEQ);
                     }
+                    break;
+                }
+              case TS_CDHASH:
+                {
+                    VALUE op = ibf_load_small_value(load, &reading_pos);
+                    VALUE v = ibf_load_object(load, op);
+                    v = rb_hash_dup(v); // hash dumped as frozen
+                    RHASH_TBL_RAW(v)->type = &cdhash_type;
+                    rb_hash_rehash(v); // hash function changed
+                    freeze_hide_obj(v);
+
+                    code[code_index] = v;
+                    RB_OBJ_WRITTEN(iseqv, Qundef, v);
+                    FL_SET(iseqv, ISEQ_MARKABLE_ISEQ);
                     break;
                 }
               case TS_ISEQ:

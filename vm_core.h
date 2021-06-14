@@ -219,23 +219,20 @@ struct rb_control_frame_struct;
 /* iseq data type */
 typedef struct rb_compile_option_struct rb_compile_option_t;
 
-#if (SIZEOF_SERIAL_T > SIZEOF_VOIDP) && defined(__CYGWIN__)
-#pragma pack(push, 4) /* == SIZEOF_VOIDP */
-#endif
-
 // imemo_constcache
 struct iseq_inline_constant_cache_entry {
     VALUE flags;
 
     VALUE value;              // v0
-    const rb_cref_t *ic_cref; // v1
-    rb_serial_t ic_serial;    // v2
-                              // v3
-};
-
-#if (SIZEOF_SERIAL_T > SIZEOF_VOIDP) && defined(__CYGWIN__)
-#pragma pack(pop)
+    rb_serial_t ic_serial;    // v1
+#if (SIZEOF_SERIAL_T < 2 * SIZEOF_VOIDP)
+    VALUE ic_padding;         // v2
 #endif
+    const rb_cref_t *ic_cref; // v3
+};
+STATIC_ASSERT(sizeof_iseq_inline_constant_cache_entry,
+              (offsetof(struct iseq_inline_constant_cache_entry, ic_cref) +
+	       sizeof(const rb_cref_t *)) <= sizeof(struct RObject));
 
 struct iseq_inline_constant_cache {
     struct iseq_inline_constant_cache_entry *entry;
@@ -443,7 +440,10 @@ struct rb_iseq_constant_body {
     unsigned int stack_max; /* for stack overflow check */
 
     char catch_except_p; /* If a frame of this ISeq may catch exception, set TRUE */
-    bool builtin_inline_p; // This ISeq's builtin func is safe to be inlined by MJIT
+    // If true, this ISeq is leaf *and* backtraces are not used, for example,
+    // by rb_profile_frames. We verify only leafness on VM_CHECK_MODE though.
+    // For more details, see: https://bugs.ruby-lang.org/issues/16956
+    bool builtin_inline_p;
     struct rb_id_table *outer_variables;
 
 #if USE_MJIT
@@ -951,6 +951,10 @@ struct rb_ext_config {
 
 typedef struct rb_ractor_struct rb_ractor_t;
 
+#if defined(__linux__) || defined(__FreeBSD__)
+# define RB_THREAD_T_HAS_NATIVE_ID
+#endif
+
 typedef struct rb_thread_struct {
     struct list_node lt_node; // managed by a ractor
     VALUE self;
@@ -972,6 +976,9 @@ typedef struct rb_thread_struct {
     rb_nativethread_id_t thread_id;
 #ifdef NON_SCALAR_THREAD_ID
     rb_thread_id_string_t thread_id_string;
+#endif
+#ifdef RB_THREAD_T_HAS_NATIVE_ID
+    int tid;
 #endif
     BITFIELD(enum rb_thread_status, status, 2);
     /* bit flags */
@@ -1766,7 +1773,7 @@ rb_execution_context_t *rb_vm_main_ractor_ec(rb_vm_t *vm); // ractor.c
 /* for thread */
 
 #if RUBY_VM_THREAD_MODEL == 2
-RUBY_SYMBOL_EXPORT_BEGIN
+MJIT_SYMBOL_EXPORT_BEGIN
 
 RUBY_EXTERN struct rb_ractor_struct *ruby_single_main_ractor; // ractor.c
 RUBY_EXTERN rb_vm_t *ruby_current_vm_ptr;
@@ -1774,12 +1781,12 @@ RUBY_EXTERN rb_event_flag_t ruby_vm_event_flags;
 RUBY_EXTERN rb_event_flag_t ruby_vm_event_enabled_global_flags;
 RUBY_EXTERN unsigned int    ruby_vm_event_local_num;
 
-RUBY_SYMBOL_EXPORT_END
+MJIT_SYMBOL_EXPORT_END
 
 #define GET_VM()     rb_current_vm()
 #define GET_RACTOR() rb_current_ractor()
 #define GET_THREAD() rb_current_thread()
-#define GET_EC()     rb_current_execution_context()
+#define GET_EC()     rb_current_execution_context(true)
 
 static inline rb_thread_t *
 rb_ec_thread_ptr(const rb_execution_context_t *ec)
@@ -1813,7 +1820,7 @@ rb_ec_vm_ptr(const rb_execution_context_t *ec)
 }
 
 static inline rb_execution_context_t *
-rb_current_execution_context(void)
+rb_current_execution_context(bool expect_ec)
 {
 #ifdef RB_THREAD_LOCAL_SPECIFIER
   #ifdef __APPLE__
@@ -1824,7 +1831,7 @@ rb_current_execution_context(void)
 #else
     rb_execution_context_t *ec = native_tls_get(ruby_current_ec_key);
 #endif
-    VM_ASSERT(ec != NULL);
+    VM_ASSERT(!expect_ec || ec != NULL);
     return ec;
 }
 

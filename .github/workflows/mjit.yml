@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TESTOPTS: '-q --tty=no'
-      RUN_OPTS: '--disable-gems ${{ matrix.jit_opts }} --jit-debug=-ggdb3'
+      RUN_OPTS: '--disable-gems ${{ matrix.jit_opts }} --jit-debug=-ggdb3 --disable-yjit'
       GITPULLOPTIONS: --no-tags origin ${{github.ref}}
     steps:
       - run: mkdir build
@@ -38,7 +38,7 @@ jobs:
       - run: ./autogen.sh
         working-directory: src
       - name: Run configure
-        run: ../src/configure -C --disable-install-doc
+        run: ../src/configure -C --disable-install-doc cppflags=-DVM_CHECK_MODE
       - run: make $JOBS incs
       - run: make $JOBS
       - run: sudo make $JOBS -s install

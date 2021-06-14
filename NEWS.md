@@ -101,6 +101,10 @@ Outstanding ones only.
     * Queue#initialize now accepts an Enumerable of initial values.
       [[Feature #17327]]
 
+* Thread
+
+    * Thread#native_thread_id is added. [[Feature #17853]]
+
 * Thread::Backtrace
 
     * Thread::Backtrace.limit, which returns the value to limit backtrace
@@ -130,7 +134,12 @@ Excluding feature bug fixes.
 
 ### JIT
 
-* `RubyVM::MJIT` is renamed to `RubyVM::JIT`.
+* The default `--jit-max-cache` is changed from 100 to 10000.
+
+* The JIT compiler no longer skips compilation of methods longer than
+  1000 instructions.
+
+* `RubyVM::MJIT` is renamed to `RubyVM::JIT`. [[Feature #17490]]
 
 ## Static analysis
 
@@ -158,5 +167,6 @@ Excluding feature bug fixes.
 [Feature #17411]: https://bugs.ruby-lang.org/issues/17411
 [Bug #17423]: https://bugs.ruby-lang.org/issues/17423
 [Feature #17479]: https://bugs.ruby-lang.org/issues/17479
+[Feature #17490]: https://bugs.ruby-lang.org/issues/17490
 [Feature #17744]: https://bugs.ruby-lang.org/issues/17744
 [Feature #17762]: https://bugs.ruby-lang.org/issues/17762
