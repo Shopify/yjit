@@ -45,7 +45,7 @@
 
 #ifdef HAVE_MALLOC_USABLE_SIZE
 # ifdef RUBY_ALTERNATIVE_MALLOC_HEADER
-#  include RUBY_ALTERNATIVE_MALLOC_HEADER
+/* Alternative malloc header is included in ruby/missing.h */
 # elif defined(HAVE_MALLOC_H)
 #  include <malloc.h>
 # elif defined(HAVE_MALLOC_NP_H)
@@ -6420,7 +6420,7 @@ mark_current_machine_context(rb_objspace_t *objspace, rb_execution_context_t *ec
 {
     union {
 	rb_jmp_buf j;
-	VALUE v[sizeof(rb_jmp_buf) / sizeof(VALUE)];
+	VALUE v[sizeof(rb_jmp_buf) / (sizeof(VALUE))];
     } save_regs_gc_mark;
     VALUE *stack_start, *stack_end;
 
@@ -10772,6 +10772,8 @@ gc_set_initial_pages(void)
 {
     size_t min_pages;
     rb_objspace_t *objspace = &rb_objspace;
+
+    gc_rest(objspace);
 
     min_pages = gc_params.heap_init_slots / HEAP_PAGE_OBJ_LIMIT;
     if (min_pages > heap_eden->total_pages) {
