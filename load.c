@@ -1028,18 +1028,22 @@ require_internal(rb_execution_context_t *ec, VALUE fname, int exception)
 {
     volatile int result = -1;
     rb_thread_t *th = rb_ec_thread_ptr(ec);
-    volatile VALUE wrapper = th->top_wrapper;
-    volatile VALUE self = th->top_self;
-    volatile VALUE errinfo = ec->errinfo;
+    volatile const struct {
+        VALUE wrapper, self, errinfo;
+    } saved = {
+        th->top_wrapper, th->top_self, ec->errinfo,
+    };
     enum ruby_tag_type state;
     char *volatile ftptr = 0;
     VALUE path;
+    volatile VALUE saved_path;
     volatile bool reset_ext_config = false;
     struct rb_ext_config prev_ext_config;
 
     fname = rb_get_path(fname);
     path = rb_str_encode_ospath(fname);
     RUBY_DTRACE_HOOK(REQUIRE_ENTRY, RSTRING_PTR(fname));
+    saved_path = path;
 
     EC_PUSH_TAG(ec);
     ec->errinfo = Qnil; /* ensure */
@@ -1049,8 +1053,9 @@ require_internal(rb_execution_context_t *ec, VALUE fname, int exception)
 	int found;
 
 	RUBY_DTRACE_HOOK(FIND_REQUIRE_ENTRY, RSTRING_PTR(fname));
-        found = search_required(path, &path, rb_feature_p);
+        found = search_required(path, &saved_path, rb_feature_p);
 	RUBY_DTRACE_HOOK(FIND_REQUIRE_RETURN, RSTRING_PTR(fname));
+        path = saved_path;
 
 	if (found) {
             if (!path || !(ftptr = load_lock(RSTRING_PTR(path)))) {
@@ -1080,10 +1085,11 @@ require_internal(rb_execution_context_t *ec, VALUE fname, int exception)
     EC_POP_TAG();
 
     rb_thread_t *th2 = rb_ec_thread_ptr(ec);
-    th2->top_self = self;
-    th2->top_wrapper = wrapper;
+    th2->top_self = saved.self;
+    th2->top_wrapper = saved.wrapper;
     if (reset_ext_config) ext_config_pop(th2, &prev_ext_config);
 
+    path = saved_path;
     if (ftptr) load_unlock(RSTRING_PTR(path), !state);
 
     if (state) {
@@ -1110,7 +1116,7 @@ require_internal(rb_execution_context_t *ec, VALUE fname, int exception)
     }
 
     if (result == TAG_RETURN) rb_provide_feature(path);
-    ec->errinfo = errinfo;
+    ec->errinfo = saved.errinfo;
 
     RUBY_DTRACE_HOOK(REQUIRE_RETURN, RSTRING_PTR(fname));
 

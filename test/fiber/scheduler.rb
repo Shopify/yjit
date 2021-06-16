@@ -223,4 +223,18 @@ class Scheduler
 
     return fiber
   end
+
+  def address_resolve(hostname)
+    Thread.new do
+      Addrinfo.getaddrinfo(hostname, nil).map(&:ip_address).uniq
+    end.value
+  end
+end
+
+class BrokenUnblockScheduler < Scheduler
+  def unblock(blocker, fiber)
+    super
+
+    raise "Broken unblock!"
+  end
 end
