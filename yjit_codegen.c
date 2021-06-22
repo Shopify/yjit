@@ -3050,7 +3050,7 @@ gen_invokesuper(jitstate_t *jit, ctx_t *ctx)
     const rb_callable_method_entry_t *ancestor_cme;
     while (ancestor) {
         ancestor_cme = rb_callable_method_entry(ancestor, mid);
-        if (ancestor_cme && ancestor_cme->def == cme->def) {
+        if (ancestor_cme && ancestor_cme->def == me->def) {
             return YJIT_CANT_COMPILE;
         }
         ancestor = RCLASS_SUPER(ancestor);
