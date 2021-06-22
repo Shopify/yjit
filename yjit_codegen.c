@@ -2972,7 +2972,6 @@ gen_send(jitstate_t *jit, ctx_t *ctx)
     return gen_send_general(jit, ctx, cd, block);
 }
 
-RBIMPL_ATTR_MAYBE_UNUSED() // not in use as it has problems in some situations.
 static codegen_status_t
 gen_invokesuper(jitstate_t *jit, ctx_t *ctx)
 {
@@ -3027,13 +3026,6 @@ gen_invokesuper(jitstate_t *jit, ctx_t *ctx)
         return YJIT_CANT_COMPILE;
     }
 
-    // Because we're assuming only one current_defined_class for a given
-    // receiver class we need to check that the superclass doesn't also
-    // re-include the same module.
-    if (rb_class_search_ancestor(comptime_superclass, current_defined_class)) {
-        return YJIT_CANT_COMPILE;
-    }
-
     // Do method lookup
     const rb_callable_method_entry_t *cme = rb_callable_method_entry(comptime_superclass, mid);
 
@@ -3049,6 +3041,19 @@ gen_invokesuper(jitstate_t *jit, ctx_t *ctx)
         default:
             // others unimplemented
             return YJIT_CANT_COMPILE;
+    }
+
+    // Because we're assuming only one current_defined_class for a given
+    // receiver class we need to check that the method doesn't also
+    // exist in any of our ancestors
+    VALUE ancestor = comptime_superclass;
+    const rb_callable_method_entry_t *ancestor_cme;
+    while (ancestor) {
+        ancestor_cme = rb_callable_method_entry(ancestor, mid);
+        if (ancestor_cme && ancestor_cme->def == cme->def) {
+            return YJIT_CANT_COMPILE;
+        }
+        ancestor = RCLASS_SUPER(ancestor);
     }
 
     // Guard that the receiver has the same class as the one from compile time
@@ -3354,5 +3359,6 @@ yjit_init_codegen(void)
     yjit_reg_op(BIN(getblockparamproxy), gen_getblockparamproxy);
     yjit_reg_op(BIN(opt_send_without_block), gen_opt_send_without_block);
     yjit_reg_op(BIN(send), gen_send);
+    yjit_reg_op(BIN(invokesuper), gen_invokesuper);
     yjit_reg_op(BIN(leave), gen_leave);
 }
