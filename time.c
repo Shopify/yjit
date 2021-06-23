@@ -1797,7 +1797,8 @@ time_memsize(const void *tobj)
 static const rb_data_type_t time_data_type = {
     "time",
     {time_mark, RUBY_TYPED_DEFAULT_FREE, time_memsize,},
-    0, 0, RUBY_TYPED_FREE_IMMEDIATELY
+    0, 0,
+    (RUBY_TYPED_FREE_IMMEDIATELY | RUBY_TYPED_FROZEN_SHAREABLE),
 };
 
 static VALUE
@@ -3457,10 +3458,10 @@ time_to_i(VALUE time)
  *  the exact number of nanoseconds since the Epoch.
  *  (IEEE 754 double has 53bit mantissa.
  *  So it can represent exact number of nanoseconds only in
- *  `2 ** 53 / 1_000_000_000 / 60 / 60 / 24 = 104.2` days.)
+ *  <tt>2 ** 53 / 1_000_000_000 / 60 / 60 / 24 = 104.2</tt> days.)
  *  When Ruby uses a nanosecond-resolution clock function,
  *  such as +clock_gettime+ of POSIX, to obtain the current time,
- *  Time#to_f can lost information of a Time object created with +Time.now+.
+ *  Time#to_f can lose information of a Time object created with +Time.now+.
  */
 
 static VALUE

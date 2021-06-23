@@ -337,6 +337,7 @@ struct parser_params {
     unsigned int do_loop: 1;
     unsigned int do_chomp: 1;
     unsigned int do_split: 1;
+    unsigned int save_script_lines: 1;
 
     NODE *eval_tree_begin;
     NODE *eval_tree;
@@ -6241,6 +6242,13 @@ yycompile0(VALUE arg)
 	    cov = Qtrue;
 	}
     }
+    if (p->save_script_lines) {
+        if (!p->debug_lines) {
+            p->debug_lines = rb_ary_new();
+        }
+
+        RB_OBJ_WRITE(p->ast, &p->ast->body.script_lines, p->debug_lines);
+    }
 
     parser_prepare(p);
 #define RUBY_DTRACE_PARSE_HOOK(name) \
@@ -6278,7 +6286,7 @@ yycompile0(VALUE arg)
         RB_OBJ_WRITE(p->ast, &p->ast->body.compile_option, opt);
     }
     p->ast->body.root = tree;
-    p->ast->body.line_count = p->line_count;
+    if (!p->ast->body.script_lines) p->ast->body.script_lines = INT2FIX(p->line_count);
     return TRUE;
 }
 
@@ -7145,7 +7153,7 @@ tokadd_string(struct parser_params *p,
                         int i;
                         char escbuf[5];
                         snprintf(escbuf, sizeof(escbuf), "\\x%02X", c);
-                        for(i = 0; i < 4; i++) {
+                        for (i = 0; i < 4; i++) {
                             tokadd(p, escbuf[i]);
                         }
                         continue;
@@ -13185,6 +13193,15 @@ rb_parser_set_context(VALUE vparser, const struct rb_iseq_struct *base, int main
     p->error_buffer = main ? Qfalse : Qnil;
     p->parent_iseq = base;
     return vparser;
+}
+
+void
+rb_parser_save_script_lines(VALUE vparser)
+{
+    struct parser_params *p;
+
+    TypedData_Get_Struct(vparser, struct parser_params, &parser_data_type, p);
+    p->save_script_lines = 1;
 }
 #endif
 

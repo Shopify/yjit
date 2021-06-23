@@ -153,15 +153,13 @@ class Gem::TestCase < Test::Unit::TestCase
 
         return captured_stdout.read, captured_stderr.read
       ensure
-        captured_stdout.unlink
-        captured_stderr.unlink
         $stdout.reopen orig_stdout
         $stderr.reopen orig_stderr
 
         orig_stdout.close
         orig_stderr.close
-        captured_stdout.close
-        captured_stderr.close
+        captured_stdout.close!
+        captured_stderr.close!
       end
     end
   end
@@ -1593,7 +1591,7 @@ class Object
     metaclass.send :undef_method, name
     metaclass.send :alias_method, name, new_name
     metaclass.send :undef_method, new_name
-  end
+  end unless method_defined?(:stub) # lib/resolv/test_dns.rb also has the same method definition
 end
 
 require_relative 'utilities'
