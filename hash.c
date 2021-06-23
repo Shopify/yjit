@@ -6510,7 +6510,7 @@ env_clone(int argc, VALUE *argv, VALUE obj)
         rb_scan_args(argc, argv, "0:", &opt);
         if (!NIL_P(opt)) {
             rb_get_kwargs(opt, keyword_ids, 0, 1, &kwfreeze);
-            switch(kwfreeze) {
+            switch (kwfreeze) {
               case Qtrue:
                 rb_raise(rb_eTypeError, "cannot freeze ENV");
                 break;
@@ -6884,8 +6884,11 @@ env_dup(VALUE obj)
  *
  *  === What's Here
  *
- *  First, what's elsewhere. \Hash includes the module Enumerable,
- *  which provides dozens of additional methods.
+ *  First, what's elsewhere. \Class \Hash:
+ *
+ *  - Inherits from {class Object}[Object.html#class-Object-label-What-27s+Here].
+ *  - Includes {module Enumerable}[Enumerable.html#module-Enumerable-label-What-27s+Here],
+ *    which provides dozens of additional methods.
  *
  *  Here, class \Hash provides methods that are useful for:
  *
