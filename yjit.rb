@@ -55,6 +55,70 @@ module YJIT
     def self.comments_for(start_address, end_address)
       Primitive.comments_for(start_address, end_address)
     end
+
+    def self.graphviz_for(iseq)
+      iseq = RubyVM::InstructionSequence.of(iseq)
+      cs = YJIT::Disasm.new
+
+      highlight = ->(comment) { "<b>#{comment}</b>" }
+      linebreak = "<br align=\"left\"/>\n"
+
+      buff = ''
+      blocks = blocks_for(iseq).sort_by(&:id)
+      buff << "digraph g {\n"
+
+      # Write the iseq info as a legend
+      buff << "  legend [shape=record fontsize=\"30\" fillcolor=\"lightgrey\" style=\"filled\"];\n"
+      buff << "  legend [label=\"{ Instruction Disassembly For: | {#{iseq.base_label}@#{iseq.absolute_path}:#{iseq.first_lineno}}}\"];\n"
+
+      # Subgraph contains disassembly
+      buff << "  subgraph disasm {\n"
+      buff << "  node [shape=record fontname=\"courier\"];\n"
+      buff << "  edge [fontname=\"courier\" penwidth=3];\n"
+      blocks.each do |block|
+        disasm = disasm_block(cs, block, highlight)
+
+        # convert newlines to breaks that graphviz understands
+        disasm.gsub!(/\n/, linebreak)
+
+        # strip leading whitespace
+        disasm.gsub!(/^\s+/, '')
+
+        buff << "b#{block.id} [label=<#{disasm}>];\n"
+        buff << block.outgoing_ids.map { |id|
+          next_block = blocks.bsearch { |nb| id <=> nb.id }
+          if next_block.address == (block.address + block.code.length)
+            "b#{block.id} -> b#{id}[label=\"Fall\"];"
+          else
+            "b#{block.id} -> b#{id}[label=\"Jump\" style=dashed];"
+          end
+        }.join("\n")
+        buff << "\n"
+      end
+      buff << "  }"
+      buff << "}"
+      buff
+    end
+
+    def self.disasm_block(cs, block, highlight)
+      comments = comments_for(block.address, block.address + block.code.length)
+      comment_idx = 0
+      str = ''
+      cs.disasm(block.code, block.address).each do |i|
+        while (comment = comments[comment_idx]) && comment.address <= i.address
+          str << "  ; #{highlight.call(comment.comment)}\n"
+          comment_idx += 1
+        end
+
+        str << sprintf(
+          "  %<address>08x:  %<instruction>s\t%<details>s\n",
+          address: i.address,
+          instruction: i.mnemonic,
+          details: i.op_str
+        )
+      end
+      str
+    end
   end
 
   # Return a hash for statistics generated for the --yjit-stats command line option.
