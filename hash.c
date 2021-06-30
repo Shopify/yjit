@@ -5043,7 +5043,7 @@ env_fetch(int argc, VALUE *argv, VALUE _)
 int
 rb_env_path_tainted(void)
 {
-    rb_warn_deprecated_to_remove("rb_env_path_tainted", "3.2");
+    rb_warn_deprecated_to_remove_at(3.2, "rb_env_path_tainted", NULL);
     return 0;
 }
 
@@ -6489,10 +6489,10 @@ env_update(VALUE env, VALUE hash)
 
 /*
  * call-seq:
- *   ENV.clone(freeze: nil) -> copy of ENV
+ *   ENV.clone(freeze: nil) -> ENV
  *
- * Returns a clone of ENV, but warns because the ENV data is shared with the
- * clone.
+ * Returns ENV itself, and warns because ENV is a wrapper for the
+ * process-wide environment variables and a clone is useless.
  * If +freeze+ keyword is given and not +nil+ or +false+, raises ArgumentError.
  * If +freeze+ keyword is given and +true+, raises TypeError, as ENV storage
  * cannot be frozen.
@@ -6501,25 +6501,11 @@ static VALUE
 env_clone(int argc, VALUE *argv, VALUE obj)
 {
     if (argc) {
-        static ID keyword_ids[1];
         VALUE opt, kwfreeze;
-
-        if (!keyword_ids[0]) {
-            CONST_ID(keyword_ids[0], "freeze");
-        }
-        rb_scan_args(argc, argv, "0:", &opt);
-        if (!NIL_P(opt)) {
-            rb_get_kwargs(opt, keyword_ids, 0, 1, &kwfreeze);
-            switch (kwfreeze) {
-              case Qtrue:
+        if (rb_scan_args(argc, argv, "0:", &opt) < argc) {
+            kwfreeze = rb_get_freeze_opt(1, &opt);
+            if (RTEST(kwfreeze)) {
                 rb_raise(rb_eTypeError, "cannot freeze ENV");
-                break;
-              default:
-                rb_raise(rb_eArgError, "invalid value for freeze keyword");
-                break;
-              case Qnil:
-              case Qfalse:
-                break;
             }
         }
     }

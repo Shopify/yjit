@@ -533,7 +533,7 @@ assert_equal '[RuntimeError, "ok", true]', %q{
 # threads in a ractor will killed
 assert_equal '{:ok=>3}', %q{
   Ractor.new Ractor.current do |main|
-    q = Queue.new
+    q = Thread::Queue.new
     Thread.new do
       q << true
       loop{}
@@ -1403,6 +1403,19 @@ assert_equal "ok", %q{
   rescue TypeError
     'ok'
   end
+}
+
+assert_equal "ok", %q{
+  GC.disable
+  Ractor.new {}
+  raise "not ok" unless GC.disable
+
+  foo = []
+  10.times { foo << 1 }
+
+  GC.start
+
+  'ok'
 }
 
 end # if !ENV['GITHUB_WORKFLOW']
