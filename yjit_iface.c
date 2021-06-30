@@ -29,6 +29,8 @@ static VALUE cYjitBlock;
 static int64_t exit_op_count[VM_INSTRUCTION_SIZE] = { 0 };
 struct rb_yjit_runtime_counters yjit_runtime_counters = { 0 };
 static VALUE cYjitCodeComment;
+
+extern const int rb_vm_max_insn_name_size;
 #endif
 
 // Machine code blocks (executable memory)
@@ -707,15 +709,26 @@ comments_for(rb_execution_context_t *ec, VALUE self, VALUE start_address, VALUE 
     return comment_array;
 }
 
-// Primitive called in yjit.rb. Export all runtime counters as a Ruby hash.
+// Primitive called in yjit.rb. Export all YJIT statistics as a Ruby hash.
 static VALUE
-get_stat_counters(rb_execution_context_t *ec, VALUE self)
+get_yjit_stats(rb_execution_context_t *ec, VALUE self)
 {
 #if RUBY_DEBUG
     if (!rb_yjit_opts.gen_stats) return Qnil;
 
     VALUE hash = rb_hash_new();
     RB_VM_LOCK_ENTER();
+
+    {
+        VALUE key = ID2SYM(rb_intern("inline_code_size"));
+        VALUE value = LL2NUM((long long)cb->write_pos);
+        rb_hash_aset(hash, key, value);
+
+        key = ID2SYM(rb_intern("outlined_code_size"));
+        value = LL2NUM((long long)ocb->write_pos);
+        rb_hash_aset(hash, key, value);
+    }
+
     {
         int64_t *counter_reader = (int64_t *)&yjit_runtime_counters;
         int64_t *counter_reader_end = &yjit_runtime_counters.last_member;
@@ -747,6 +760,22 @@ get_stat_counters(rb_execution_context_t *ec, VALUE self)
             name_reader = name_end;
         }
     }
+
+    {
+        // For each entry in exit_op_count, add a stats entry with key "exit_INSTRUCTION_NAME",
+        // where the value is the count of side exits for that instruction.
+
+        char key_string[rb_vm_max_insn_name_size + 6]; // Leave room for "exit_" and a final NUL
+        for (int i = 0; i < VM_INSTRUCTION_SIZE; i++) {
+            const char *i_name = insn_name(i); // Look up Ruby's NUL-terminated insn name string
+            snprintf(key_string, rb_vm_max_insn_name_size + 6, "%s%s", "exit_", i_name);
+
+            VALUE key = ID2SYM(rb_intern(key_string));
+            VALUE value = LL2NUM((long long)exit_op_count[i]);
+            rb_hash_aset(hash, key, value);
+        }
+    }
+
     RB_VM_LOCK_LEAVE();
     return hash;
 #else
@@ -768,8 +797,6 @@ reset_stats_bang(rb_execution_context_t *ec, VALUE self)
 #include "yjit.rbinc"
 
 #if RUBY_DEBUG
-// implementation for --yjit-stats
-
 void
 rb_yjit_collect_vm_usage_insn(int insn)
 {
@@ -795,128 +822,7 @@ rb_yjit_count_side_exit_op(const VALUE *exit_pc)
     exit_op_count[insn]++;
     return exit_pc; // This function must return exit_pc!
 }
-
-struct insn_count {
-    int64_t insn;
-    int64_t count;
-};
-
-static int
-insn_count_sort_comp(const void *a, const void *b)
-{
-    const struct insn_count *count_a = a;
-    const struct insn_count *count_b = b;
-    if (count_a->count > count_b->count) {
-        return -1;
-    }
-    else if (count_a->count < count_b->count) {
-        return 1;
-    }
-    return 0;
-}
-
-static struct insn_count insn_sorting_buffer[VM_INSTRUCTION_SIZE];
-static const struct insn_count *
-sort_insn_count_array(int64_t *array)
-{
-    for (int i = 0; i < VM_INSTRUCTION_SIZE; i++) {
-        insn_sorting_buffer[i] = (struct insn_count) { i, array[i] };
-    }
-    qsort(insn_sorting_buffer, VM_INSTRUCTION_SIZE, sizeof(insn_sorting_buffer[0]), &insn_count_sort_comp);
-    return insn_sorting_buffer;
-}
-
-// Compute the total interpreter exit count
-static int64_t
-calc_total_exit_count()
-{
-    size_t total_exit_count = 0;
-    for (int i = 0; i < VM_INSTRUCTION_SIZE; i++) {
-        total_exit_count += exit_op_count[i];
-    }
-
-    return total_exit_count;
-}
-
-static void
-print_insn_count_buffer(int how_many, int left_pad)
-{
-    size_t total_exit_count = calc_total_exit_count();
-
-    // Sort the exit ops by decreasing frequency
-    const struct insn_count *sorted_exit_ops = sort_insn_count_array(exit_op_count);
-
-    // Compute the longest instruction name and top10_exit_count
-    size_t longest_insn_len = 0;
-    size_t top10_exit_count = 0;
-    for (int i = 0; i < how_many; i++) {
-        const char *instruction_name = insn_name(sorted_exit_ops[i].insn);
-        size_t len = strlen(instruction_name);
-        if (len > longest_insn_len) {
-            longest_insn_len = len;
-        }
-        top10_exit_count += sorted_exit_ops[i].count;
-    }
-
-    double top10_exit_percent = 100.0 * top10_exit_count / total_exit_count;
-
-    fprintf(stderr, "top-%d most frequent exit ops (%.1f%% of exits):\n", how_many, top10_exit_percent);
-
-    // Print the top-N most frequent exit counts
-    for (int i = 0; i < how_many; i++) {
-        const char *instruction_name = insn_name(sorted_exit_ops[i].insn);
-        size_t padding = left_pad + longest_insn_len - strlen(instruction_name);
-        for (size_t j = 0; j < padding; j++) {
-            fputc(' ', stderr);
-        }
-        double percent = 100 * sorted_exit_ops[i].count / (double)total_exit_count;
-        fprintf(stderr, "%s: %10" PRId64 " (%.1f%%)\n", instruction_name, sorted_exit_ops[i].count, percent);
-    }
-}
-
-__attribute__((destructor))
-static void
-print_yjit_stats(void)
-{
-    if (!rb_yjit_opts.gen_stats) {
-        return;
-    }
-
-    // Warn if the executable code block is out of the relative
-    // 32-bit jump range away from compiled C code
-    ptrdiff_t start_diff = (cb->mem_block + cb->mem_size) - (uint8_t*)&print_yjit_stats;
-    if (start_diff < INT32_MIN || start_diff > INT32_MAX) {
-        fprintf(stderr, "WARNING: end of code block past rel32 offset range from C code\n");
-    }
-
-    // Compute the total exit count
-    int64_t total_exit_count = calc_total_exit_count();
-
-    // Number of instructions that finish executing in YJIT. See :count-placement:.
-    int64_t retired_in_yjit = yjit_runtime_counters.exec_instruction - total_exit_count;
-
-    // Average length of instruction sequences executed by YJIT
-    double avg_len_in_yjit = (double)retired_in_yjit / total_exit_count;
-
-    // Proportion of instructions that retire in YJIT
-    int64_t total_insns_count = retired_in_yjit + yjit_runtime_counters.vm_insns_count;
-    double ratio = retired_in_yjit / (double)total_insns_count;
-
-    fprintf(stderr, "compiled_iseq_count:   %10" PRId64 "\n", yjit_runtime_counters.compiled_iseq_count);
-    fprintf(stderr, "inline_code_size:      %10d\n", cb->write_pos);
-    fprintf(stderr, "outlined_code_size:    %10d\n", ocb->write_pos);
-
-    fprintf(stderr, "total_exit_count:      %10" PRId64 "\n", total_exit_count);
-    fprintf(stderr, "total_insns_count:     %10" PRId64 "\n", total_insns_count);
-    fprintf(stderr, "vm_insns_count:        %10" PRId64 "\n", yjit_runtime_counters.vm_insns_count);
-    fprintf(stderr, "yjit_insns_count:      %10" PRId64 "\n", yjit_runtime_counters.exec_instruction);
-    fprintf(stderr, "ratio_in_yjit:         %9.1f%%\n", ratio * 100);
-    fprintf(stderr, "avg_len_in_yjit:       %10.1f\n", avg_len_in_yjit);
-
-    // Print the top-N most frequent exit ops
-    print_insn_count_buffer(20, 4);
-}
-#endif // if RUBY_DEBUG
+#endif
 
 void
 rb_yjit_iseq_mark(const struct rb_iseq_constant_body *body)
