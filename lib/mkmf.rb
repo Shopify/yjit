@@ -284,7 +284,8 @@ MESSAGE
   end
 
   def split_libs(*strs)
-    strs.map {|s| s.split(/\s+(?=-|\z)/)}.flatten
+    sep = $mswin ? /\s+/ : /\s+(?=-|\z)/
+    strs.map {|s| s.lstrip.split(sep)}.flatten
   end
 
   def merge_libs(*libs)
@@ -2497,7 +2498,7 @@ site-install-rb: install-rb
       mfile.print "$(ECHO) linking static-library $(@#{rsep})\n\t$(Q) "
       mfile.print "$(AR) #{config_string('ARFLAGS') || 'cru '}$@ $(OBJS)"
       config_string('RANLIB') do |ranlib|
-        mfile.print "\n\t-$(Q)#{ranlib} $(@) 2> /dev/null || true"
+        mfile.print "\n\t-$(Q)#{ranlib} $(@)#{$ignore_error}"
       end
     end
     mfile.print "\n\n"

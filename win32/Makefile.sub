@@ -982,6 +982,7 @@ s,@SOEXT@,dll,;t t
 s,@DLEXT@,so,;t t
 s,@LIBEXT@,lib,;t t
 s,@STRIP@,$(STRIP),;t t
+s,@ENCSTATIC@,$(ENCSTATIC),;t t
 s,@EXTSTATIC@,$(EXTSTATIC),;t t
 s,@setup@,Setup,;t t
 s,@MINIRUBY@,$(MINIRUBY),;t t
@@ -1092,8 +1093,9 @@ miniruby.rc:
 !if "$(PROGRAM)" != ""
 $(PROGRAM):	$(MAINOBJ) $(LIBRUBY_SO) $(RUBY_INSTALL_NAME).res
 		$(ECHO) linking $(@:\=/)
-		$(Q) $(PURIFY) $(CC) $(MAINOBJ) $(EXTOBJS) $(RUBY_INSTALL_NAME).res \
-			$(OUTFLAG)$@ $(LIBRUBYARG) -link $(LDFLAGS) $(XLDFLAGS)
+		$(Q) $(PURIFY) $(CC) $(MAINOBJ) \
+			$(RUBY_INSTALL_NAME).res $(OUTFLAG)$@ $(LIBRUBYARG) \
+			-link $(LDFLAGS) $(XLDFLAGS)
 		$(Q) $(LDSHARED_0)
 		$(Q) $(LDSHARED_1)
 		$(Q) $(LDSHARED_2)
@@ -1222,9 +1224,6 @@ $(ruby_pc): $(RBCONFIG)
 {$(srcdir)/coroutine/win64}.asm{coroutine/win64}.obj:
 	$(ECHO) assembling $(<:\=/)
 	$(Q) $(AS) $(ASFLAGS) $(XCFLAGS) $(CPPFLAGS) $(COUTFLAG)$@ -c $(<:\=/)
-{$(srcdir)/coroutine/copy}.c{coroutine/copy}.obj:
-	$(ECHO) compiling $(<:\=/)
-	$(Q) $(CC) $(CFLAGS) $(XCFLAGS) $(CPPFLAGS) $(COUTFLAG)$@ -c $(CSRCFLAG)$(<:\=/)
 
 {$(srcdir)/enc/trans}.c.obj:
 	$(ECHO) compiling $(<:\=/)
