@@ -169,7 +169,7 @@ EXPORTOBJS    = $(DLNOBJ) \
 OBJS          = $(EXPORTOBJS) builtin.$(OBJEXT)
 ALLOBJS       = $(NORMALMAINOBJ) $(MINIOBJS) $(COMMONOBJS) $(INITOBJS)
 
-GOLFOBJS      = goruby.$(OBJEXT) golf_prelude.$(OBJEXT)
+GOLFOBJS      = goruby.$(OBJEXT)
 
 DEFAULT_PRELUDES = $(GEM_PRELUDE)
 PRELUDE_SCRIPTS = $(DEFAULT_PRELUDES)
@@ -218,7 +218,7 @@ MAKE_LINK = $(MINIRUBY) -rfileutils -e "include FileUtils::Verbose" \
 
 all: $(SHOWFLAGS) main docs
 
-main: $(SHOWFLAGS) exts $(ENCSTATIC:static=lib)encs programs
+main: $(SHOWFLAGS) exts $(ENCSTATIC:static=lib)encs
 	@$(NULLCMD)
 
 mjit-headers: $(MJIT_SUPPORT)-mjit-headers
@@ -331,7 +331,6 @@ $(GOLF): $(LIBRUBY) $(GOLFOBJS) PHONY
 	$(Q) $(MAKE) $(mflags) \
 		GOLF=_dummy_golf_target_to_avoid_conflict_just_in_case_ \
 		MAINOBJ=goruby.$(OBJEXT) \
-		EXTOBJS="golf_prelude.$(OBJEXT) $(EXTOBJS)" \
 		PROGRAM=$(GORUBY)$(EXEEXT) \
 		V=$(V) \
 	program
@@ -6049,9 +6048,22 @@ golf_prelude.$(OBJEXT): {$(VPATH)}thread_$(THREAD_MODEL).h
 golf_prelude.$(OBJEXT): {$(VPATH)}thread_native.h
 golf_prelude.$(OBJEXT): {$(VPATH)}vm_core.h
 golf_prelude.$(OBJEXT): {$(VPATH)}vm_opts.h
+goruby.$(OBJEXT): $(CCAN_DIR)/check_type/check_type.h
+goruby.$(OBJEXT): $(CCAN_DIR)/container_of/container_of.h
+goruby.$(OBJEXT): $(CCAN_DIR)/list/list.h
+goruby.$(OBJEXT): $(CCAN_DIR)/str/str.h
 goruby.$(OBJEXT): $(hdrdir)/ruby.h
 goruby.$(OBJEXT): $(hdrdir)/ruby/ruby.h
+goruby.$(OBJEXT): $(top_srcdir)/internal/array.h
+goruby.$(OBJEXT): $(top_srcdir)/internal/compilers.h
+goruby.$(OBJEXT): $(top_srcdir)/internal/gc.h
+goruby.$(OBJEXT): $(top_srcdir)/internal/imemo.h
+goruby.$(OBJEXT): $(top_srcdir)/internal/serial.h
+goruby.$(OBJEXT): $(top_srcdir)/internal/static_assert.h
+goruby.$(OBJEXT): $(top_srcdir)/internal/vm.h
+goruby.$(OBJEXT): $(top_srcdir)/internal/warnings.h
 goruby.$(OBJEXT): {$(VPATH)}assert.h
+goruby.$(OBJEXT): {$(VPATH)}atomic.h
 goruby.$(OBJEXT): {$(VPATH)}backward.h
 goruby.$(OBJEXT): {$(VPATH)}backward/2/assume.h
 goruby.$(OBJEXT): {$(VPATH)}backward/2/attributes.h
@@ -6063,9 +6075,14 @@ goruby.$(OBJEXT): {$(VPATH)}backward/2/long_long.h
 goruby.$(OBJEXT): {$(VPATH)}backward/2/stdalign.h
 goruby.$(OBJEXT): {$(VPATH)}backward/2/stdarg.h
 goruby.$(OBJEXT): {$(VPATH)}config.h
+goruby.$(OBJEXT): {$(VPATH)}darray.h
 goruby.$(OBJEXT): {$(VPATH)}defines.h
+goruby.$(OBJEXT): {$(VPATH)}golf_prelude.c
+goruby.$(OBJEXT): {$(VPATH)}golf_prelude.rb
 goruby.$(OBJEXT): {$(VPATH)}goruby.c
+goruby.$(OBJEXT): {$(VPATH)}id.h
 goruby.$(OBJEXT): {$(VPATH)}intern.h
+goruby.$(OBJEXT): {$(VPATH)}internal.h
 goruby.$(OBJEXT): {$(VPATH)}internal/anyargs.h
 goruby.$(OBJEXT): {$(VPATH)}internal/arithmetic.h
 goruby.$(OBJEXT): {$(VPATH)}internal/arithmetic/char.h
@@ -6205,12 +6222,20 @@ goruby.$(OBJEXT): {$(VPATH)}internal/value_type.h
 goruby.$(OBJEXT): {$(VPATH)}internal/variable.h
 goruby.$(OBJEXT): {$(VPATH)}internal/warning_push.h
 goruby.$(OBJEXT): {$(VPATH)}internal/xmalloc.h
+goruby.$(OBJEXT): {$(VPATH)}iseq.h
 goruby.$(OBJEXT): {$(VPATH)}main.c
+goruby.$(OBJEXT): {$(VPATH)}method.h
 goruby.$(OBJEXT): {$(VPATH)}missing.h
 goruby.$(OBJEXT): {$(VPATH)}node.h
+goruby.$(OBJEXT): {$(VPATH)}ruby_assert.h
+goruby.$(OBJEXT): {$(VPATH)}ruby_atomic.h
 goruby.$(OBJEXT): {$(VPATH)}st.h
 goruby.$(OBJEXT): {$(VPATH)}subst.h
+goruby.$(OBJEXT): {$(VPATH)}thread_$(THREAD_MODEL).h
+goruby.$(OBJEXT): {$(VPATH)}thread_native.h
+goruby.$(OBJEXT): {$(VPATH)}vm_core.h
 goruby.$(OBJEXT): {$(VPATH)}vm_debug.h
+goruby.$(OBJEXT): {$(VPATH)}vm_opts.h
 hash.$(OBJEXT): $(hdrdir)/ruby.h
 hash.$(OBJEXT): $(hdrdir)/ruby/ruby.h
 hash.$(OBJEXT): $(top_srcdir)/internal/array.h
@@ -8641,8 +8666,8 @@ mjit.$(OBJEXT): {$(VPATH)}vm_callinfo.h
 mjit.$(OBJEXT): {$(VPATH)}vm_core.h
 mjit.$(OBJEXT): {$(VPATH)}vm_debug.h
 mjit.$(OBJEXT): {$(VPATH)}vm_opts.h
-mjit.$(OBJEXT): {$(VPATH)}yjit.h
 mjit.$(OBJEXT): {$(VPATH)}vm_sync.h
+mjit.$(OBJEXT): {$(VPATH)}yjit.h
 mjit_build_dir.$(OBJEXT): {$(VPATH)}config.h
 mjit_build_dir.$(OBJEXT): {$(VPATH)}internal/compiler_is.h
 mjit_build_dir.$(OBJEXT): {$(VPATH)}internal/compiler_is/apple.h
