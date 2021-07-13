@@ -237,14 +237,12 @@ yjit_save_regs(codeblock_t* cb)
     push(cb, REG_CFP);
     push(cb, REG_EC);
     push(cb, REG_SP);
-    push(cb, REG_SP); // Maintain 16-byte RSP alignment
 }
 
 // Restore YJIT registers after a C call
 static void
 yjit_load_regs(codeblock_t* cb)
 {
-    pop(cb, REG_SP); // Maintain 16-byte RSP alignment
     pop(cb, REG_SP);
     pop(cb, REG_EC);
     pop(cb, REG_CFP);
@@ -2715,11 +2713,9 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
     // Pop the C function arguments from the stack (in the caller)
     ctx_stack_pop(ctx, argc + 1);
 
-    if (block) {
-        // Write interpreter SP into CFP.
-        // Needed in case the callee yields to the block.
-        jit_save_sp(jit, ctx);
-    }
+    // Write interpreter SP into CFP.
+    // Needed in case the callee yields to the block.
+    jit_save_sp(jit, ctx);
 
     // Save YJIT registers
     yjit_save_regs(cb);
