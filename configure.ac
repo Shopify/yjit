@@ -1306,45 +1306,53 @@ AC_ARG_WITH([jemalloc],
   [AS_HELP_STRING([--with-jemalloc],[use jemalloc allocator])],
   [with_jemalloc=$withval], [with_jemalloc=no])
 AS_IF([test "x$with_jemalloc" != xno],[
-  AC_SEARCH_LIBS([malloc_conf], [jemalloc],
-    [
-      AC_DEFINE(HAVE_LIBJEMALLOC, 1)
-      with_jemalloc=yes
-    ],
-    [test x$with_jemalloc = xyes && with_jemalloc=no])
-  for malloc_header in jemalloc/jemalloc.h jemalloc.h; do
-    AC_CHECK_HEADER($malloc_header, [break], [malloc_header=])
-  done
+  # find jemalloc header first
+  malloc_header=
+  AC_CHECK_HEADER(jemalloc/jemalloc.h, [malloc_header=jemalloc/jemalloc.h], [
+    AC_CHECK_HEADER(jemalloc.h, [malloc_header=jemalloc.h])
+  ])
   AS_IF([test "$malloc_header" != ""], [
     AC_DEFINE_UNQUOTED(RUBY_ALTERNATIVE_MALLOC_HEADER, [<$malloc_header>])
-  ],
-  [test x$with_jemalloc = xyes && with_jemalloc=no])
-  AS_IF([test "x$with_jemalloc" != xyes], [
-    AC_CACHE_CHECK([for jemalloc with JEMALLOC_MANGLE], rb_cv_jemalloc_demangle,
-      [AC_LINK_IFELSE([AC_LANG_PROGRAM([@%:@define JEMALLOC_MANGLE 1
-      @%:@ifdef RUBY_ALTERNATIVE_MALLOC_HEADER
-      @%:@include RUBY_ALTERNATIVE_MALLOC_HEADER
-      @%:@else
-      extern const char *malloc_conf;
-      @%:@endif], [return !&malloc_conf])],
-      [rb_cv_jemalloc_demangle=yes],
-      [rb_cv_jemalloc_demangle=no])
-    ])
   ])
-  AS_IF([test "x$rb_cv_jemalloc_demangle" = xyes], [
-    AC_DEFINE(JEMALLOC_MANGLE)
-    with_jemalloc=yes
+  save_LIBS="$LIBS"
+  AC_CACHE_CHECK([for jemalloc library], rb_cv_jemalloc_library, [
+    rb_cv_jemalloc_library=no
+    # try [with mangle, without mangle] x [no more additional
+    # libraries, adding jemalloc] combination, using the jemalloc
+    # header found above.
+    for mangle in '' mangle; do
+      for lib in '' -ljemalloc; do
+        LIBS="${lib:+$lib }$LIBS"
+        AC_LINK_IFELSE([AC_LANG_PROGRAM([${mangle:+@%:@define JEMALLOC_MANGLE 1}
+          @%:@include <stdio.h>
+          @%:@ifdef RUBY_ALTERNATIVE_MALLOC_HEADER
+          @%:@include RUBY_ALTERNATIVE_MALLOC_HEADER
+          @%:@else
+          extern const char *malloc_conf;
+          @%:@endif],
+          [/* access at runtime not to be optimized away */
+          if (malloc_conf) printf("malloc_conf=%s\n", malloc_conf);])],
+          [rb_cv_jemalloc_library="${lib:-none required}${mangle:+ with mangle}"])
+        LIBS="$save_LIBS"
+        test "${rb_cv_jemalloc_library}" = no || break 2
+      done
+    done
+  ])
+  with_jemalloc=${rb_cv_jemalloc_library}
+  AS_CASE(["$with_jemalloc"],
+  [no],
+    [AC_MSG_ERROR([jemalloc requested but not found])],
+  [-l*], [
+    set dummy $with_jemalloc
+    LIBS="$2 $LIBS"
   ])
   AS_CASE(["$with_jemalloc"],
-    [yes],
-    [
-      AC_DEFINE(HAVE_MALLOC_CONF)
-      ac_cv_func_malloc_usable_size=yes
-    ],
-    [no],
-    [AC_MSG_ERROR([jemalloc requested but not found])
+  [*" with mangle"], [
+    AC_DEFINE(JEMALLOC_MANGLE)
   ])
-])
+  AC_DEFINE(HAVE_MALLOC_CONF)
+  ac_cv_func_malloc_usable_size=yes
+]) # with_jemalloc
 
 dnl check for large file stuff
 mv confdefs.h confdefs1.h
@@ -3392,6 +3400,17 @@ AS_CASE("$enable_shared", [yes], [
   AC_DEFINE_UNQUOTED(LIBDIR_BASENAME, ["${libdir_basename}"])
   libdir_basename="${libdir_basename}"${multiarch+'/${arch}'}
 
+  # Debian bullseye reportedly has its ld(1) patched, which breaks
+  # --enable-shared --with-jemalloc combination.  We might have to deal with
+  # the ld(1) change sooner or later, but in the meantime let us force it
+  # the old way.
+  #
+  # See https://github.com/ruby/ruby/pull/4627
+  RUBY_TRY_LDFLAGS([${linker_flag}--no-as-needed], [no_as_needed=yes], [no_as_needed=no])
+  AS_IF([test "$no_as_needed" = yes], [
+      RUBY_APPEND_OPTIONS(LDFLAGS, [${linker_flag}--no-as-needed])
+  ])
+
   AS_CASE(["$target_os"],
     [freebsd*|dragonfly*], [],
     [
@@ -3859,6 +3878,7 @@ AS_IF([test -n "${LIBS}"], [
     MAINFLAGS=`echo " $MAINLIBS " | sed "s|$libspat"'||;s/^ *//;s/ *$//'`
 ])
 LIBRUBYARG_STATIC="${LIBRUBYARG_STATIC} \$(MAINLIBS)"
+LIBRUBYARG_SHARED="${LIBRUBYARG_SHARED} \$(MAINLIBS)"
 CPPFLAGS="$CPPFLAGS "'$(DEFS)'
 test -z "$CPPFLAGS" || CPPFLAGS="$CPPFLAGS "; CPPFLAGS="$CPPFLAGS"'${cppflags}'
 AS_IF([test -n "${cflags+set}"], [
