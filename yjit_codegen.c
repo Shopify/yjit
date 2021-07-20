@@ -33,6 +33,35 @@ codeblock_t* ocb = NULL;
 // Code for exiting back to the interpreter from the leave insn
 static void *leave_exit_code;
 
+// Allocate a new code page
+void
+yjit_new_code_page(void)
+{
+    // Allocate a new code page
+    VALUE new_code_page = rb_yjit_code_page_alloc();
+    code_page_t *code_page = rb_yjit_code_page_unwrap(new_code_page);
+    uint8_t* mem_block = code_page->mem_block;
+    uint32_t mem_size = code_page->page_size;
+
+    // If the new page isn't the first code page
+    if (yjit_cur_code_page != Qfalse) {
+        assert (cb && cb->write_pos < cb->mem_size - 20);
+
+        // Jump to the next code page
+        jmp_ptr(cb, mem_block);
+    }
+
+    // Map the inline code block
+    cb = &block;
+    cb_init(cb, mem_block, mem_size/2);
+
+    // Map the outlined code block
+    ocb = &outline_block;
+    cb_init(ocb, mem_block + mem_size/2, mem_size/2);
+
+    yjit_cur_code_page = new_code_page;
+}
+
 // Print the current source location for debugging purposes
 RBIMPL_ATTR_MAYBE_UNUSED()
 static void
@@ -435,14 +464,12 @@ yjit_gen_block(block_t *block, rb_execution_context_t *ec)
     uint32_t insn_idx = block->blockid.idx;
     const uint32_t starting_insn_idx = insn_idx;
 
-    // NOTE: if we are ever deployed in production, we
-    // should probably just log an error and return NULL here,
-    // so we can fail more gracefully
-    if (cb->write_pos + 1024 >= cb->mem_size) {
-        rb_bug("out of executable memory");
-    }
-    if (ocb->write_pos + 1024 >= ocb->mem_size) {
-        rb_bug("out of executable memory (outlined block)");
+    // If we don't have enough space for this block
+    if (cb->write_pos + 1024 >= cb->mem_size ||
+        ocb->write_pos + 1024 >= ocb->mem_size) {
+
+        // Allocate a new code page
+        yjit_new_code_page();
     }
 
     // Initialize a JIT state object
@@ -3590,15 +3617,8 @@ yjit_reg_op(int opcode, codegen_fn gen_fn)
 void
 yjit_init_codegen(void)
 {
-    // Initialize the code blocks
-    uint32_t mem_size = rb_yjit_opts.exec_mem_size * 1024 * 1024;
-    uint8_t *mem_block = alloc_exec_mem(mem_size);
-
-    cb = &block;
-    cb_init(cb, mem_block, mem_size/2);
-
-    ocb = &outline_block;
-    cb_init(ocb, mem_block + mem_size/2, mem_size/2);
+    // Allocate the first code page
+    yjit_new_code_page();
 
     // Generate the interpreter exit code for leave
     leave_exit_code = yjit_gen_leave_exit(cb);

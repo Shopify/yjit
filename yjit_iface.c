@@ -36,6 +36,9 @@ extern const int rb_vm_max_insn_name_size;
 extern codeblock_t *cb;
 extern codeblock_t *ocb;
 
+// Current code page we are writing machine code into
+VALUE yjit_cur_code_page = Qfalse;
+
 // Hash table of encoded instructions
 extern st_table *rb_encoded_insn_data;
 
@@ -276,6 +279,8 @@ yjit_root_mark(void *ptr)
         // references.
         st_foreach(cme_validity_dependency, mark_and_pin_keys_i, 0);
     }
+
+    rb_gc_mark(yjit_cur_code_page);
 }
 
 static void
