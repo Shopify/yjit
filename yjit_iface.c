@@ -13,7 +13,6 @@
 #include "yjit_iface.h"
 #include "yjit_codegen.h"
 #include "yjit_core.h"
-#include "yjit_hooks.inc"
 #include "darray.h"
 
 #ifdef HAVE_LIBCAPSTONE
@@ -47,22 +46,6 @@ static const rb_data_type_t yjit_block_type = {
     {0, 0, 0, },
     0, 0, RUBY_TYPED_FREE_IMMEDIATELY
 };
-
-// Write the YJIT entry point pre-call bytes
-void
-cb_write_pre_call_bytes(codeblock_t* cb)
-{
-    for (size_t i = 0; i < sizeof(yjit_with_ec_pre_call_bytes); ++i)
-        cb_write_byte(cb, yjit_with_ec_pre_call_bytes[i]);
-}
-
-// Write the YJIT exit post-call bytes
-void
-cb_write_post_call_bytes(codeblock_t* cb)
-{
-    for (size_t i = 0; i < sizeof(yjit_with_ec_post_call_bytes); ++i)
-        cb_write_byte(cb, yjit_with_ec_post_call_bytes[i]);
-}
 
 // Get the PC for a given index in an iseq
 VALUE *
@@ -465,26 +448,32 @@ yjit_block_assumptions_free(block_t *block)
     }
 }
 
-void
+typedef VALUE (*yjit_func_t)(rb_execution_context_t *, rb_control_frame_t *);
+
+bool
 rb_yjit_compile_iseq(const rb_iseq_t *iseq, rb_execution_context_t *ec)
 {
-#if OPT_DIRECT_THREADED_CODE || OPT_CALL_THREADED_CODE
+#if (OPT_DIRECT_THREADED_CODE || OPT_CALL_THREADED_CODE) && JIT_ENABLED
+    bool success = true;
     RB_VM_LOCK_ENTER();
     // TODO: I think we need to stop all other ractors here
-    VALUE *encoded = (VALUE *)iseq->body->iseq_encoded;
 
     // Compile a block version starting at the first instruction
     uint8_t* code_ptr = gen_entry_point(iseq, 0, ec);
 
     if (code_ptr)
     {
-        // Map the code address to the corresponding opcode
-        int first_opcode = yjit_opcode_at_pc(iseq, &encoded[0]);
-        map_addr2insn(code_ptr, first_opcode);
-        encoded[0] = (VALUE)code_ptr;
+        iseq->body->jit_func = (yjit_func_t)code_ptr;
+    }
+    else {
+        iseq->body->jit_func = 0;
+        success = false;
     }
 
     RB_VM_LOCK_LEAVE();
+    return success;
+#else
+    return false;
 #endif
 }
 
@@ -1017,7 +1006,7 @@ outgoing_ids(VALUE self)
 void
 rb_yjit_init(struct rb_yjit_options *options)
 {
-    if (!yjit_scrape_successful || !PLATFORM_SUPPORTED_P) {
+    if (!PLATFORM_SUPPORTED_P || !JIT_ENABLED) {
         return;
     }
 

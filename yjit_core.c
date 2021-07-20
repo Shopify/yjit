@@ -535,7 +535,7 @@ uint8_t* gen_entry_point(const rb_iseq_t *iseq, uint32_t insn_idx, rb_execution_
     blockid_t blockid = { iseq, insn_idx };
 
     // Write the interpreter entry prologue
-    uint8_t* code_ptr = yjit_entry_prologue();
+    uint8_t* code_ptr = yjit_entry_prologue(iseq);
 
     // Try to generate code for the entry block
     block_t* block = gen_block_version(blockid, &DEFAULT_CTX, ec);
@@ -675,7 +675,6 @@ uint8_t* get_branch_target(
     push(ocb, REG_CFP);
     push(ocb, REG_EC);
     push(ocb, REG_SP);
-    push(ocb, REG_SP);
 
     // Call branch_stub_hit(branch_idx, target_idx, ec)
     mov(ocb, C_ARG_REGS[2], REG_EC);
@@ -684,7 +683,6 @@ uint8_t* get_branch_target(
     call_ptr(ocb, REG0, (void *)&branch_stub_hit);
 
     // Restore the yjit registers
-    pop(ocb, REG_SP);
     pop(ocb, REG_SP);
     pop(ocb, REG_EC);
     pop(ocb, REG_CFP);
@@ -945,17 +943,12 @@ invalidate_block_version(block_t* block)
         }
     }
 
-    uint32_t idx = block->blockid.idx;
-    // FIXME: the following says "if", but it's unconditional.
-    // If the block is an entry point, it needs to be unmapped from its iseq
-    VALUE* entry_pc = yjit_iseq_pc_at_idx(iseq, idx);
-    int entry_opcode = yjit_opcode_at_pc(iseq, entry_pc);
+    // Clear out the JIT func so that we can recompile later and so the
+    // interpreter will run the iseq
 
-    // TODO: unmap_addr2insn in yjit_iface.c? Maybe we can write a function to encompass this logic?
-    // Should check how it's used in exit and side-exit
-    const void * const *handler_table = rb_vm_get_insns_address_table();
-    void* handler_addr = (void*)handler_table[entry_opcode];
-    iseq->body->iseq_encoded[idx] = (VALUE)handler_addr;
+#if JIT_ENABLED
+    iseq->body->jit_func = 0;
+#endif
 
     // TODO:
     // May want to recompile a new entry point (for interpreter entry blocks)
