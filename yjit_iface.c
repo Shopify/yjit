@@ -38,6 +38,9 @@ struct rb_yjit_runtime_counters yjit_runtime_counters = { 0 };
 extern codeblock_t *cb;
 extern codeblock_t *ocb;
 
+// Current code page we are writing machine code into
+VALUE yjit_cur_code_page = Qfalse;
+
 // Hash table of encoded instructions
 extern st_table *rb_encoded_insn_data;
 
@@ -289,6 +292,8 @@ yjit_root_mark(void *ptr)
         // references.
         st_foreach(cme_validity_dependency, mark_and_pin_keys_i, 0);
     }
+
+    rb_gc_mark(yjit_cur_code_page);
 }
 
 static void
@@ -530,7 +535,7 @@ block_address(VALUE self)
 {
     block_t * block;
     TypedData_Get_Struct(self, block_t, &yjit_block_type, block);
-    uint8_t* code_addr = cb_get_ptr(cb, block->start_pos);
+    uint8_t* code_addr = block->start_pos;
     return LONG2NUM((intptr_t)code_addr);
 }
 
@@ -542,7 +547,7 @@ block_code(VALUE self)
     TypedData_Get_Struct(self, block_t, &yjit_block_type, block);
 
     return (VALUE)rb_str_new(
-        (const char*)cb->mem_block + block->start_pos,
+        (const char*)block->start_pos,
         block->end_pos - block->start_pos
     );
 }
@@ -865,18 +870,14 @@ rb_yjit_iseq_mark(const struct rb_iseq_constant_body *body)
             }
 
             // Walk over references to objects in generated code.
-            uint32_t *offset_element;
+            uint8_t **offset_element;
             rb_darray_foreach(block->gc_object_offsets, offset_idx, offset_element) {
-                uint32_t offset_to_value = *offset_element;
-                uint8_t *value_address = cb_get_ptr(cb, offset_to_value);
+                uint8_t *value_address = *offset_element;
 
                 VALUE object;
                 memcpy(&object, value_address, SIZEOF_VALUE);
                 rb_gc_mark_movable(object);
             }
-
-            // Mark the machine code page this block lives on
-            rb_gc_mark_movable(block->code_page);
         }
     }
 }
@@ -907,10 +908,9 @@ rb_yjit_iseq_update_references(const struct rb_iseq_constant_body *body)
             }
 
             // Walk over references to objects in generated code.
-            uint32_t *offset_element;
+            uint8_t **offset_element;
             rb_darray_foreach(block->gc_object_offsets, offset_idx, offset_element) {
-                uint32_t offset_to_value = *offset_element;
-                uint8_t *value_address = cb_get_ptr(cb, offset_to_value);
+                uint8_t *value_address = *offset_element;
 
                 VALUE object;
                 memcpy(&object, value_address, SIZEOF_VALUE);
@@ -920,9 +920,6 @@ rb_yjit_iseq_update_references(const struct rb_iseq_constant_body *body)
                     memcpy(value_address, &possibly_moved, SIZEOF_VALUE);
                 }
             }
-
-            // Update the machine code page this block lives on
-            block->code_page = rb_gc_location(block->code_page);
         }
     }
 }
@@ -948,6 +945,8 @@ rb_yjit_iseq_free(const struct rb_iseq_constant_body *body)
 static void
 yjit_code_page_free(void *code_page)
 {
+    fprintf(stderr, "FREEING CODE PAGE\n");
+
     free_code_page((code_page_t*)code_page);
 }
 
@@ -963,6 +962,10 @@ VALUE rb_yjit_code_page_alloc(void)
 {
     code_page_t* code_page = alloc_code_page();
     VALUE cp_obj = TypedData_Wrap_Struct(0, &yjit_code_page_type, code_page);
+
+    // Write a pointer to the wrapper object at the beginning of the code page
+    *((VALUE*)code_page->mem_block) = cp_obj;
+
     return cp_obj;
 }
 
@@ -972,6 +975,44 @@ code_page_t *rb_yjit_code_page_unwrap(VALUE cp_obj)
     code_page_t * code_page;
     TypedData_Get_Struct(cp_obj, code_page_t, &yjit_code_page_type, code_page);
     return code_page;
+}
+
+// Get the code page wrapper object for a code pointer
+VALUE rb_yjit_code_page_from_ptr(uint8_t* code_ptr)
+{
+    VALUE* page_start = (VALUE*)((intptr_t)code_ptr & ~(CODE_PAGE_SIZE - 1));
+    VALUE wrapper = *page_start;
+    return wrapper;
+}
+
+// Get the inline code block corresponding to a code pointer
+void rb_yjit_get_cb(codeblock_t* cb, uint8_t* code_ptr)
+{
+    VALUE page_wrapper = rb_yjit_code_page_from_ptr(code_ptr);
+    code_page_t *code_page = rb_yjit_code_page_unwrap(page_wrapper);
+
+    // A pointer to the page wrapper object is written at the start of the code page
+    uint8_t* mem_block = code_page->mem_block + sizeof(VALUE);
+    uint32_t mem_size = (code_page->page_size/2) - sizeof(VALUE);
+    RUBY_ASSERT(mem_block);
+
+    // Map the code block to this memory region
+    cb_init(cb, mem_block, mem_size);
+}
+
+// Get the outlined code block corresponding to a code pointer
+void rb_yjit_get_ocb(codeblock_t* cb, uint8_t* code_ptr)
+{
+    VALUE page_wrapper = rb_yjit_code_page_from_ptr(code_ptr);
+    code_page_t *code_page = rb_yjit_code_page_unwrap(page_wrapper);
+
+    // A pointer to the page wrapper object is written at the start of the code page
+    uint8_t* mem_block = code_page->mem_block + (code_page->page_size/2);
+    uint32_t mem_size = code_page->page_size/2;
+    RUBY_ASSERT(mem_block);
+
+    // Map the code block to this memory region
+    cb_init(cb, mem_block, mem_size);
 }
 
 bool

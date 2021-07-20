@@ -52,11 +52,34 @@ typedef rb_darray(struct codepage_patch) patch_array_t;
 
 static patch_array_t global_inval_patches = NULL;
 
-// The number of bytes counting from the beginning of the inline code block
-// that should not be changed. After patching for global invalidation, no one
-// should make changes to the invalidated code region anymore. This is used to
-// break out of invalidation race when there are multiple ractors.
-uint32_t yjit_codepage_frozen_bytes = 0;
+// Allocate a new code page
+void
+yjit_new_code_page(void)
+{
+    // Allocate a new code page
+    VALUE new_code_page = rb_yjit_code_page_alloc();
+    code_page_t *code_page = rb_yjit_code_page_unwrap(new_code_page);
+
+    // If the new page isn't the first code page
+    if (yjit_cur_code_page != Qfalse) {
+        assert (cb && cb->write_pos < cb->mem_size - 20);
+
+        // Jump to the new code page
+        jmp_ptr(cb, code_page->mem_block + SIZEOF_VALUE);
+    }
+
+    // Map the inline code block
+    cb = &block;
+    rb_yjit_get_cb(cb, code_page->mem_block);
+    RUBY_ASSERT(cb->mem_block);
+
+    // Map the outlined code block
+    ocb = &outline_block;
+    rb_yjit_get_ocb(ocb, code_page->mem_block);
+    RUBY_ASSERT(ocb->mem_block);
+
+    yjit_cur_code_page = new_code_page;
+}
 
 // Print the current source location for debugging purposes
 RBIMPL_ATTR_MAYBE_UNUSED()
@@ -112,10 +135,10 @@ jit_mov_gc_ptr(jitstate_t* jit, codeblock_t* cb, x86opnd_t reg, VALUE ptr)
     mov(cb, reg, const_ptr_opnd((void*)ptr));
 
     // The pointer immediate is encoded as the last part of the mov written out
-    uint32_t ptr_offset = cb->write_pos - sizeof(VALUE);
+    uint8_t* ptr_to_value = cb_get_write_ptr(cb) - sizeof(VALUE);
 
     if (!SPECIAL_CONST_P(ptr)) {
-        if (!rb_darray_append(&jit->block->gc_object_offsets, ptr_offset)) {
+        if (!rb_darray_append(&jit->block->gc_object_offsets, ptr_to_value)) {
             rb_bug("allocation failed");
         }
     }
@@ -472,7 +495,6 @@ full_cfunc_return(rb_execution_context_t *ec, VALUE return_value)
 
     // CHECK_CFP_CONSISTENCY("full_cfunc_return"); TODO revive this
 
-
     // Pop the C func's frame and fire the c_return TracePoint event
     // Note that this is the same order as vm_call_cfunc_with_frame().
     rb_vm_pop_frame(ec);
@@ -598,6 +620,7 @@ jit_jump_to_next_insn(jitstate_t *jit, const ctx_t *current_context)
 
     // Generate the jump instruction
     gen_direct_jump(
+        cb,
         jit->block,
         &reset_depth,
         jump_block
@@ -620,14 +643,12 @@ yjit_gen_block(block_t *block, rb_execution_context_t *ec)
     uint32_t insn_idx = block->blockid.idx;
     const uint32_t starting_insn_idx = insn_idx;
 
-    // NOTE: if we are ever deployed in production, we
-    // should probably just log an error and return NULL here,
-    // so we can fail more gracefully
-    if (cb->write_pos + 1024 >= cb->mem_size) {
-        rb_bug("out of executable memory");
-    }
-    if (ocb->write_pos + 1024 >= ocb->mem_size) {
-        rb_bug("out of executable memory (outlined block)");
+    // If we don't have enough space for this block
+    if (cb->write_pos + 1024 >= cb->mem_size ||
+        ocb->write_pos + 1024 >= ocb->mem_size) {
+
+        // Allocate a new code page
+        yjit_new_code_page();
     }
 
     // Initialize a JIT state object
@@ -638,7 +659,7 @@ yjit_gen_block(block_t *block, rb_execution_context_t *ec)
     };
 
     // Mark the start position of the block
-    block->start_pos = cb->write_pos;
+    block->start_pos = cb_get_write_ptr(cb);
 
     // For each instruction to compile
     for (;;) {
@@ -722,7 +743,7 @@ yjit_gen_block(block_t *block, rb_execution_context_t *ec)
     }
 
     // Mark the end position of the block
-    block->end_pos = cb->write_pos;
+    block->end_pos = cb_get_write_ptr(cb);
 
     // Store the index of the last instruction in the block
     block->end_idx = insn_idx;
@@ -1478,6 +1499,8 @@ jit_chain_guard(enum jcc_kinds jcc, jitstate_t *jit, const ctx_t *ctx, uint8_t d
         deeper.chain_depth++;
 
         gen_branch(
+            cb,
+            ocb,
             jit->block,
             ctx,
             (blockid_t) { jit->iseq, jit->insn_idx },
@@ -1685,7 +1708,7 @@ gen_getinstancevariable(jitstate_t *jit, ctx_t *ctx)
 {
     // Defer compilation so we can specialize on a runtime `self`
     if (!jit_at_current_insn(jit)) {
-        defer_compilation(jit->block, jit->insn_idx, ctx);
+        defer_compilation(cb, ocb, jit->block, jit->insn_idx, ctx);
         return YJIT_END_BLOCK;
     }
 
@@ -2119,7 +2142,7 @@ gen_opt_aref(jitstate_t *jit, ctx_t *ctx)
 
     // Defer compilation so we can specialize base on a runtime receiver
     if (!jit_at_current_insn(jit)) {
-        defer_compilation(jit->block, jit->insn_idx, ctx);
+        defer_compilation(cb, ocb, jit->block, jit->insn_idx, ctx);
         return YJIT_END_BLOCK;
     }
 
@@ -2674,6 +2697,8 @@ gen_branchif(jitstate_t* jit, ctx_t* ctx)
 
     // Generate the branch instructions
     gen_branch(
+        cb,
+        ocb,
         jit->block,
         ctx,
         jump_block,
@@ -2731,6 +2756,8 @@ gen_branchunless(jitstate_t* jit, ctx_t* ctx)
 
     // Generate the branch instructions
     gen_branch(
+        cb,
+        ocb,
         jit->block,
         ctx,
         jump_block,
@@ -2787,6 +2814,8 @@ gen_branchnil(jitstate_t* jit, ctx_t* ctx)
 
     // Generate the branch instructions
     gen_branch(
+        cb,
+        ocb,
         jit->block,
         ctx,
         jump_block,
@@ -2816,6 +2845,7 @@ gen_jump(jitstate_t* jit, ctx_t* ctx)
 
     // Generate the jump instruction
     gen_direct_jump(
+        cb,
         jit->block,
         ctx,
         jump_block
@@ -3541,6 +3571,8 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
 
     // Write the JIT return address on the callee frame
     gen_branch(
+        cb,
+        ocb,
         jit->block,
         ctx,
         return_block,
@@ -3558,6 +3590,7 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
 
     // Directly jump to the entry point of the callee
     gen_direct_jump(
+        cb,
         jit->block,
         &callee_ctx,
         (blockid_t){ iseq, start_pc_offset }
@@ -3602,7 +3635,7 @@ gen_send_general(jitstate_t *jit, ctx_t *ctx, struct rb_call_data *cd, rb_iseq_t
 
     // Defer compilation so we can specialize on class of receiver
     if (!jit_at_current_insn(jit)) {
-        defer_compilation(jit->block, jit->insn_idx, ctx);
+        defer_compilation(cb, ocb, jit->block, jit->insn_idx, ctx);
         return YJIT_END_BLOCK;
     }
 
@@ -3735,7 +3768,7 @@ gen_invokesuper(jitstate_t *jit, ctx_t *ctx)
 
     // Defer compilation so we can specialize on class of receiver
     if (!jit_at_current_insn(jit)) {
-        defer_compilation(jit->block, jit->insn_idx, ctx);
+        defer_compilation(cb, ocb, jit->block, jit->insn_idx, ctx);
         return YJIT_END_BLOCK;
     }
 
@@ -4093,6 +4126,7 @@ gen_opt_getinlinecache(jitstate_t *jit, ctx_t *ctx)
     // Jump over the code for filling the cache
     uint32_t jump_idx = jit_next_insn_idx(jit) + (int32_t)jump_offset;
     gen_direct_jump(
+        cb,
         jit->block,
         ctx,
         (blockid_t){ .iseq = jit->iseq, .idx = jump_idx }
@@ -4267,13 +4301,20 @@ yjit_tracing_invalidate_all(void)
     }
     cb_set_pos(cb, old_pos);
 
+
+
+    // FIXME:
+    // FIXME: yjit_codepage_frozen_bytes no longer exists
+    // FIXME:
+
+
     // Freeze invalidated part of the codepage. We only want to wait for
     // running instances of the code to exit from now on, so we shouldn't
     // change the code. There could be other ractors sleeping in
     // branch_stub_hit(), for example. We could harden this by changing memory
     // protection on the frozen range.
-    RUBY_ASSERT_ALWAYS(yjit_codepage_frozen_bytes <= old_pos && "frozen bytes should increase monotonically");
-    yjit_codepage_frozen_bytes = old_pos;
+    //RUBY_ASSERT_ALWAYS(yjit_codepage_frozen_bytes <= old_pos && "frozen bytes should increase monotonically");
+    //yjit_codepage_frozen_bytes = old_pos;
 
     RB_VM_LOCK_LEAVE();
 }
@@ -4358,15 +4399,8 @@ yjit_reg_op(int opcode, codegen_fn gen_fn)
 void
 yjit_init_codegen(void)
 {
-    // Initialize the code blocks
-    uint32_t mem_size = rb_yjit_opts.exec_mem_size * 1024 * 1024;
-    uint8_t *mem_block = alloc_exec_mem(mem_size);
-
-    cb = &block;
-    cb_init(cb, mem_block, mem_size/2);
-
-    ocb = &outline_block;
-    cb_init(ocb, mem_block + mem_size/2, mem_size/2);
+    // Allocate the first code page
+    yjit_new_code_page();
 
     // Generate the interpreter exit code for leave
     leave_exit_code = yjit_gen_leave_exit(cb);

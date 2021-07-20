@@ -4,11 +4,6 @@
 #include "stddef.h"
 #include "yjit_core.h"
 
-// Code blocks we generate code into
-extern codeblock_t *cb;
-extern codeblock_t *ocb;
-extern uint32_t yjit_codepage_frozen_bytes;
-
 // Code generation state
 typedef struct JITState
 {

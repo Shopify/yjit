@@ -190,8 +190,8 @@ typedef struct yjit_branch_entry
     struct yjit_block_version *block;
 
     // Positions where the generated code starts and ends
-    uint32_t start_pos;
-    uint32_t end_pos;
+    uint8_t* start_pos;
+    uint8_t* end_pos;
 
     // Context right after the branch instruction
     ctx_t src_ctx;
@@ -223,7 +223,7 @@ typedef rb_darray(cme_dependency_t) cme_dependency_array_t;
 
 typedef rb_darray(branch_t*) branch_array_t;
 
-typedef rb_darray(uint32_t) int32_array_t;
+typedef rb_darray(uint8_t*) code_ptr_array_t;
 
 /**
 Basic block version
@@ -239,8 +239,8 @@ typedef struct yjit_block_version
     ctx_t ctx;
 
     // Positions where the generated code starts and ends
-    uint32_t start_pos;
-    uint32_t end_pos;
+    uint8_t* start_pos;
+    uint8_t* end_pos;
 
     // List of incoming branches (from predecessors)
     branch_array_t incoming;
@@ -249,15 +249,12 @@ typedef struct yjit_block_version
     // Note: these are owned by this block version
     branch_array_t outgoing;
 
-    // Offsets for GC managed objects in the mainline code block
-    int32_array_t gc_object_offsets;
+    // Pointers to GC managed objects in the inline code block
+    code_ptr_array_t gc_object_offsets;
 
     // CME dependencies of this block, to help to remove all pointers to this
     // block in the system.
     cme_dependency_array_t cme_dependencies;
-
-    // Code page this block lives on
-    VALUE code_page;
 
     // Index one past the last instruction in the iseq
     uint32_t end_idx;
@@ -286,11 +283,13 @@ void ctx_set_opnd_mapping(ctx_t* ctx, insn_opnd_t opnd, temp_type_mapping_t type
 
 block_t* find_block_version(blockid_t blockid, const ctx_t* ctx);
 block_t* gen_block_version(blockid_t blockid, const ctx_t* ctx, rb_execution_context_t *ec);
-uint8_t*  gen_entry_point(const rb_iseq_t *iseq, uint32_t insn_idx, rb_execution_context_t *ec);
+uint8_t* gen_entry_point(const rb_iseq_t *iseq, uint32_t insn_idx, rb_execution_context_t *ec);
 void yjit_free_block(block_t *block);
 rb_yjit_block_array_t yjit_get_version_array(const rb_iseq_t *iseq, unsigned idx);
 
 void gen_branch(
+    codeblock_t* cb,
+    codeblock_t* ocb,
     block_t* block,
     const ctx_t* src_ctx,
     blockid_t target0,
@@ -301,12 +300,15 @@ void gen_branch(
 );
 
 void gen_direct_jump(
+    codeblock_t* cb,
     block_t* block,
     const ctx_t* ctx,
     blockid_t target0
 );
 
 void defer_compilation(
+    codeblock_t* cb,
+    codeblock_t* ocb,
     block_t* block,
     uint32_t insn_idx,
     ctx_t* cur_ctx
