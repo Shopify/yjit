@@ -1012,6 +1012,7 @@ outgoing_ids(VALUE self)
 
 #if YJIT_JITDUMP
 #include <sys/mman.h>
+#include <sys/syscall.h> /* for SYS_gettid */
 #include <unistd.h>
 
 void
@@ -1064,7 +1065,7 @@ jitdump_code_load(block_t *block)
     code_load.p.timestamp = jitdump_timestamp();
 
     code_load.pid = getpid();
-    code_load.tid = gettid();
+    code_load.tid = (int)syscall(SYS_gettid);
     code_load.vma = (uint64_t)code;
     code_load.code_addr = (uint64_t)code;
     code_load.code_size = code_size;
