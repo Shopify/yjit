@@ -1054,7 +1054,7 @@ void jitdump_code_load(block_t *block) {
     uint64_t block_id = block->unique_id;
 
     code_load.p.record_type = JITDUMP_CODE_LOAD;
-    code_load.p.total_size = sizeof(code_load) + function_name_size + code_size;
+    code_load.p.total_size = (uint32_t)(sizeof(code_load) + function_name_size + code_size);
     code_load.p.timestamp = jitdump_timestamp();
 
     code_load.pid = getpid();
