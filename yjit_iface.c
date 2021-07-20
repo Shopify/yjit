@@ -1012,6 +1012,7 @@ outgoing_ids(VALUE self)
 
 #if YJIT_JITDUMP
 #include <sys/mman.h>
+#include <unistd.h>
 
 void
 jitdump_init(void)
