@@ -1087,8 +1087,6 @@ incs: $(INSNS) {$(VPATH)}node_name.inc {$(VPATH)}known_errors.inc \
 
 insns: $(INSNS)
 
-yjit_hooks.inc: vm.$(OBJEXT)
-
 id.h: $(tooldir)/generic_erb.rb $(srcdir)/template/id.h.tmpl $(srcdir)/defs/id.def
 	$(ECHO) generating $@
 	$(Q) $(BASERUBY) $(tooldir)/generic_erb.rb --output=$@ \
@@ -8680,6 +8678,18 @@ mjit_build_dir.$(OBJEXT): {$(VPATH)}internal/compiler_since.h
 mjit_build_dir.$(OBJEXT): {$(VPATH)}internal/config.h
 mjit_build_dir.$(OBJEXT): {$(VPATH)}ruby-runner.c
 mjit_build_dir.$(OBJEXT): {$(VPATH)}ruby-runner.h
+mjit_build_dir.so-ruby-runner.$(OBJEXT): {$(VPATH)}config.h
+mjit_build_dir.so-ruby-runner.$(OBJEXT): {$(VPATH)}internal/compiler_is.h
+mjit_build_dir.so-ruby-runner.$(OBJEXT): {$(VPATH)}internal/compiler_is/apple.h
+mjit_build_dir.so-ruby-runner.$(OBJEXT): {$(VPATH)}internal/compiler_is/clang.h
+mjit_build_dir.so-ruby-runner.$(OBJEXT): {$(VPATH)}internal/compiler_is/gcc.h
+mjit_build_dir.so-ruby-runner.$(OBJEXT): {$(VPATH)}internal/compiler_is/intel.h
+mjit_build_dir.so-ruby-runner.$(OBJEXT): {$(VPATH)}internal/compiler_is/msvc.h
+mjit_build_dir.so-ruby-runner.$(OBJEXT): {$(VPATH)}internal/compiler_is/sunpro.h
+mjit_build_dir.so-ruby-runner.$(OBJEXT): {$(VPATH)}internal/compiler_since.h
+mjit_build_dir.so-ruby-runner.$(OBJEXT): {$(VPATH)}internal/config.h
+mjit_build_dir.so-ruby-runner.$(OBJEXT): {$(VPATH)}ruby-runner.c
+mjit_build_dir.so-ruby-runner.$(OBJEXT): {$(VPATH)}ruby-runner.h
 mjit_compile.$(OBJEXT): $(CCAN_DIR)/check_type/check_type.h
 mjit_compile.$(OBJEXT): $(CCAN_DIR)/container_of/container_of.h
 mjit_compile.$(OBJEXT): $(CCAN_DIR)/list/list.h
@@ -16810,7 +16820,6 @@ yjit_compile.$(OBJEXT): {$(VPATH)}vm_sync.h
 yjit_compile.$(OBJEXT): {$(VPATH)}yjit.h
 yjit_compile.$(OBJEXT): {$(VPATH)}yjit_asm.h
 yjit_compile.$(OBJEXT): {$(VPATH)}yjit_compile.c
-yjit_compile.$(OBJEXT): {$(VPATH)}yjit_hooks.inc
 yjit_compile.$(OBJEXT): {$(VPATH)}yjit_utils.h
 yjit_core.$(OBJEXT): $(CCAN_DIR)/check_type/check_type.h
 yjit_core.$(OBJEXT): $(CCAN_DIR)/container_of/container_of.h
@@ -17202,11 +17211,11 @@ yjit_iface.$(OBJEXT): {$(VPATH)}vm_debug.h
 yjit_iface.$(OBJEXT): {$(VPATH)}vm_opts.h
 yjit_iface.$(OBJEXT): {$(VPATH)}vm_sync.h
 yjit_iface.$(OBJEXT): {$(VPATH)}yjit.h
+yjit_iface.$(OBJEXT): {$(VPATH)}yjit.rb
 yjit_iface.$(OBJEXT): {$(VPATH)}yjit.rbinc
 yjit_iface.$(OBJEXT): {$(VPATH)}yjit_asm.h
 yjit_iface.$(OBJEXT): {$(VPATH)}yjit_codegen.h
 yjit_iface.$(OBJEXT): {$(VPATH)}yjit_core.h
-yjit_iface.$(OBJEXT): {$(VPATH)}yjit_hooks.inc
 yjit_iface.$(OBJEXT): {$(VPATH)}yjit_iface.c
 yjit_iface.$(OBJEXT): {$(VPATH)}yjit_iface.h
 yjit_utils.$(OBJEXT): {$(VPATH)}yjit_asm.h

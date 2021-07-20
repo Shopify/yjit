@@ -46,9 +46,9 @@ YJIT_DECLARE_COUNTERS(
     send_se_cf_overflow,
     send_se_protected_check_failed,
 
-    leave_se_finish_frame,
     leave_se_interrupt,
     leave_interp_return,
+    leave_start_pc_non_zero,
 
     getivar_se_self_not_heap,
     getivar_idx_out_of_range,
@@ -95,9 +95,6 @@ extern yjit_comment_array_t yjit_code_comments;
 
 RUBY_EXTERN struct rb_yjit_options rb_yjit_opts;
 RUBY_EXTERN struct rb_yjit_runtime_counters yjit_runtime_counters;
-
-void cb_write_pre_call_bytes(codeblock_t* cb);
-void cb_write_post_call_bytes(codeblock_t* cb);
 
 void yjit_map_addr2insn(void *code_ptr, int insn);
 VALUE *yjit_iseq_pc_at_idx(const rb_iseq_t *iseq, uint32_t insn_idx);

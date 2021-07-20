@@ -237,14 +237,12 @@ yjit_save_regs(codeblock_t* cb)
     push(cb, REG_CFP);
     push(cb, REG_EC);
     push(cb, REG_SP);
-    push(cb, REG_SP); // Maintain 16-byte RSP alignment
 }
 
 // Restore YJIT registers after a C call
 static void
 yjit_load_regs(codeblock_t* cb)
 {
-    pop(cb, REG_SP); // Maintain 16-byte RSP alignment
     pop(cb, REG_SP);
     pop(cb, REG_EC);
     pop(cb, REG_CFP);
@@ -259,21 +257,6 @@ yjit_gen_exit(jitstate_t *jit, ctx_t *ctx, codeblock_t *cb)
     ADD_COMMENT(cb, "exit to interpreter");
 
     VALUE *exit_pc = jit->pc;
-
-    // YJIT only ever patches the first instruction in an iseq
-    if (jit->insn_idx == 0) {
-        // Table mapping opcodes to interpreter handlers
-        const void *const *handler_table = rb_vm_get_insns_address_table();
-
-        // Write back the old instruction at the exit PC
-        // Otherwise the interpreter may jump right back to the
-        // JITted code we're trying to exit
-        int exit_opcode = yjit_opcode_at_pc(jit->iseq, exit_pc);
-        void* handler_addr = (void*)handler_table[exit_opcode];
-        mov(cb, REG0, const_ptr_opnd(exit_pc));
-        mov(cb, REG1, const_ptr_opnd(handler_addr));
-        mov(cb, mem_opnd(64, REG0, 0), REG1);
-    }
 
     // Generate the code to exit to the interpreters
     // Write the adjusted SP back into the CFP
@@ -298,7 +281,8 @@ yjit_gen_exit(jitstate_t *jit, ctx_t *ctx, codeblock_t *cb)
     }
 #endif
 
-    cb_write_post_call_bytes(cb);
+    mov(cb, RAX, imm_opnd(Qundef));
+    ret(cb);
 
     return code_ptr;
 }
@@ -315,10 +299,13 @@ yjit_gen_leave_exit(codeblock_t *cb)
     // Every exit to the interpreter should be counted
     GEN_COUNTER_INC(cb, leave_interp_return);
 
-    // Put PC into the return register, which the post call bytes dispatches to
-    mov(cb, RAX, member_opnd(REG_CFP, rb_control_frame_t, pc));
+    // GEN_COUNTER_INC clobbers RAX, so put the top of the stack
+    // in to RAX and return.
+    mov(cb, RAX, mem_opnd(64, REG_SP, -SIZEOF_VALUE));
+    sub(cb, member_opnd(REG_CFP, rb_control_frame_t, sp), imm_opnd(SIZEOF_VALUE));
+    mov(cb, REG_SP, member_opnd(REG_CFP, rb_control_frame_t, sp));
 
-    cb_write_post_call_bytes(cb);
+    ret(cb);
 
     return code_ptr;
 }
@@ -330,12 +317,40 @@ yjit_side_exit(jitstate_t *jit, ctx_t *ctx)
     return yjit_gen_exit(jit, ctx, ocb);
 }
 
+// Generate a runtime guard that ensures the PC is at the start of the iseq,
+// otherwise take a side exit.  This is to handle the situation of optional
+// parameters.  When a function with optional parameters is called, the entry
+// PC for the method isn't necessarily 0, but we always generated code that
+// assumes the entry point is 0.
+static void
+yjit_pc_guard(const rb_iseq_t *iseq)
+{
+    RUBY_ASSERT(cb != NULL);
+
+    mov(cb, REG0, member_opnd(REG_CFP, rb_control_frame_t, pc));
+    mov(cb, REG1, const_ptr_opnd(iseq->body->iseq_encoded));
+    xor(cb, REG0, REG1);
+
+    // xor should impact ZF, so we can jz here
+    uint32_t pc_is_zero = cb_new_label(cb, "pc_is_zero");
+    jz_label(cb, pc_is_zero);
+
+    // We're not starting at the first PC, so we need to exit.
+    GEN_COUNTER_INC(cb, leave_start_pc_non_zero);
+    mov(cb, RAX, imm_opnd(Qundef));
+    ret(cb);
+
+    // PC should be at the beginning
+    cb_write_label(cb, pc_is_zero);
+    cb_link_labels(cb);
+}
+
 /*
 Compile an interpreter entry block to be inserted into an iseq
 Returns `NULL` if compilation fails.
 */
 uint8_t *
-yjit_entry_prologue(void)
+yjit_entry_prologue(const rb_iseq_t *iseq)
 {
     RUBY_ASSERT(cb != NULL);
 
@@ -347,9 +362,7 @@ yjit_entry_prologue(void)
     cb_align_pos(cb, 64);
 
     uint8_t *code_ptr = cb_get_ptr(cb, cb->write_pos);
-
-    // Write the interpreter entry prologue
-    cb_write_pre_call_bytes(cb);
+    ADD_COMMENT(cb, "yjit prolog");
 
     // Load the current SP from the CFP into REG_SP
     mov(cb, REG_SP, member_opnd(REG_CFP, rb_control_frame_t, sp));
@@ -359,10 +372,21 @@ yjit_entry_prologue(void)
     mov(cb, REG0, const_ptr_opnd(leave_exit_code));
     mov(cb, member_opnd(REG_CFP, rb_control_frame_t, jit_return), REG0);
 
+    // We're compiling iseqs that we *expect* to start at `insn_idx`. But in
+    // the case of optional parameters, the interpreter can set the pc to a
+    // different location depending on the optional parameters.  If an iseq
+    // has optional parameters, we'll add a runtime check that the PC we've
+    // compiled for is the same PC that the interpreter wants us to run with.
+    // If they don't match, then we'll take a side exit.
+    if (iseq->body->param.flags.has_opt) {
+        yjit_pc_guard(iseq);
+    }
+
     return code_ptr;
 }
 
-// Generate code to check for interrupts and take a side-exit
+// Generate code to check for interrupts and take a side-exit.
+// Warning: this function clobbers REG0
 static void
 yjit_check_ints(codeblock_t* cb, uint8_t* side_exit)
 {
@@ -2720,11 +2744,9 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
     // Pop the C function arguments from the stack (in the caller)
     ctx_stack_pop(ctx, argc + 1);
 
-    if (block) {
-        // Write interpreter SP into CFP.
-        // Needed in case the callee yields to the block.
-        jit_save_sp(jit, ctx);
-    }
+    // Write interpreter SP into CFP.
+    // Needed in case the callee yields to the block.
+    jit_save_sp(jit, ctx);
 
     // Save YJIT registers
     yjit_save_regs(cb);
@@ -3372,15 +3394,10 @@ gen_leave(jitstate_t* jit, ctx_t* ctx)
     uint8_t* side_exit = yjit_side_exit(jit, ctx);
 
     // Load environment pointer EP from CFP
-    mov(cb, REG0, member_opnd(REG_CFP, rb_control_frame_t, ep));
-
-    // if (flags & VM_FRAME_FLAG_FINISH) != 0
-    ADD_COMMENT(cb, "check for finish frame");
-    x86opnd_t flags_opnd = mem_opnd(64, REG0, sizeof(VALUE) * VM_ENV_DATA_INDEX_FLAGS);
-    test(cb, flags_opnd, imm_opnd(VM_FRAME_FLAG_FINISH));
-    jnz_ptr(cb, COUNTED_EXIT(side_exit, leave_se_finish_frame));
+    mov(cb, REG1, member_opnd(REG_CFP, rb_control_frame_t, ep));
 
     // Check for interrupts
+    ADD_COMMENT(cb, "check for interrupts");
     yjit_check_ints(cb, COUNTED_EXIT(side_exit, leave_se_interrupt));
 
     // Load the return value
