@@ -96,6 +96,8 @@ Outstanding ones only.
       You need to use a Hash literal to set a Hash to a first member.
       [[Feature #16806]]
 
+    * StructClass#keyword_init? is added [[Feature #18008]]
+
 * Queue
 
     * Queue#initialize now accepts an Enumerable of initial values.
@@ -108,7 +110,7 @@ Outstanding ones only.
 * Thread::Backtrace
 
     * Thread::Backtrace.limit, which returns the value to limit backtrace
-      length set by `--backtracse-limit` command line option, is added.
+      length set by `--backtrace-limit` command line option, is added.
       [[Feature #17479]]
 
 * $LOAD_PATH

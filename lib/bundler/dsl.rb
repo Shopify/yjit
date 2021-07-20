@@ -24,9 +24,6 @@ module Bundler
     def initialize
       @source               = nil
       @sources              = SourceList.new
-
-      @global_rubygems_sources = []
-
       @git_sources          = {}
       @dependencies         = []
       @groups               = []
@@ -48,7 +45,6 @@ module Bundler
       @gemfiles << expanded_gemfile_path
       contents ||= Bundler.read_file(@gemfile.to_s)
       instance_eval(contents.dup.tap{|x| x.untaint if RUBY_VERSION < "2.7" }, gemfile.to_s, 1)
-      check_primary_source_safety
     rescue Exception => e # rubocop:disable Lint/RescueException
       message = "There was an error " \
         "#{e.is_a?(GemfileEvalError) ? "evaluating" : "parsing"} " \
@@ -106,28 +102,26 @@ module Bundler
       # if there's already a dependency with this name we try to prefer one
       if current = @dependencies.find {|d| d.name == dep.name }
         deleted_dep = @dependencies.delete(current) if current.type == :development
+        return if deleted_dep
 
         if current.requirement != dep.requirement
-          unless deleted_dep
-            return if dep.type == :development
+          return if dep.type == :development
 
-            update_prompt = ""
+          update_prompt = ""
 
-            if File.basename(@gemfile) == Injector::INJECTED_GEMS
-              if dep.requirements_list.include?(">= 0") && !current.requirements_list.include?(">= 0")
-                update_prompt = ". Gem already added"
-              else
-                update_prompt = ". If you want to update the gem version, run `bundle update #{current.name}`"
+          if File.basename(@gemfile) == Injector::INJECTED_GEMS
+            if dep.requirements_list.include?(">= 0") && !current.requirements_list.include?(">= 0")
+              update_prompt = ". Gem already added"
+            else
+              update_prompt = ". If you want to update the gem version, run `bundle update #{current.name}`"
 
-                update_prompt += ". You may also need to change the version requirement specified in the Gemfile if it's too restrictive." unless current.requirements_list.include?(">= 0")
-              end
+              update_prompt += ". You may also need to change the version requirement specified in the Gemfile if it's too restrictive." unless current.requirements_list.include?(">= 0")
             end
-
-            raise GemfileError, "You cannot specify the same gem twice with different version requirements.\n" \
-                            "You specified: #{current.name} (#{current.requirement}) and #{dep.name} (#{dep.requirement})" \
-                             "#{update_prompt}"
           end
 
+          raise GemfileError, "You cannot specify the same gem twice with different version requirements.\n" \
+                          "You specified: #{current.name} (#{current.requirement}) and #{dep.name} (#{dep.requirement})" \
+                           "#{update_prompt}"
         else
           Bundler.ui.warn "Your Gemfile lists the gem #{current.name} (#{current.requirement}) more than once.\n" \
                           "You should probably keep only one of them.\n" \
@@ -136,12 +130,10 @@ module Bundler
         end
 
         if current.source != dep.source
-          unless deleted_dep
-            return if dep.type == :development
-            raise GemfileError, "You cannot specify the same gem twice coming from different sources.\n" \
-                            "You specified that #{dep.name} (#{dep.requirement}) should come from " \
-                            "#{current.source || "an unspecified source"} and #{dep.source}\n"
-          end
+          return if dep.type == :development
+          raise GemfileError, "You cannot specify the same gem twice coming from different sources.\n" \
+                          "You specified that #{dep.name} (#{dep.requirement}) should come from " \
+                          "#{current.source || "an unspecified source"} and #{dep.source}\n"
         end
       end
 
@@ -168,7 +160,7 @@ module Bundler
       elsif block_given?
         with_source(@sources.add_rubygems_source("remotes" => source), &blk)
       else
-        @global_rubygems_sources << source
+        @sources.add_global_rubygems_remote(source)
       end
     end
 
@@ -222,6 +214,7 @@ module Bundler
     end
 
     def to_definition(lockfile, unlock)
+      check_primary_source_safety
       Definition.new(lockfile, @dependencies, @sources, unlock, @ruby_version, @optional_groups, @gemfiles)
     end
 
@@ -453,12 +446,7 @@ repo_name ||= user_name
     end
 
     def check_rubygems_source_safety
-      @sources.global_rubygems_source = @global_rubygems_sources.shift
-      return if @global_rubygems_sources.empty?
-
-      @global_rubygems_sources.each do |source|
-        @sources.add_rubygems_remote(source)
-      end
+      return unless @sources.aggregate_global_source?
 
       if Bundler.feature_flag.bundler_3_mode?
         msg = "This Gemfile contains multiple primary sources. " \

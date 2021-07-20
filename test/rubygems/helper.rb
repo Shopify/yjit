@@ -544,6 +544,10 @@ class Gem::TestCase < Test::Unit::TestCase
     Gem.pre_uninstall_hooks.clear
   end
 
+  def without_any_upwards_gemfiles
+    ENV["BUNDLE_GEMFILE"] = File.join(@tempdir, "Gemfile")
+  end
+
   ##
   # A git_gem is used with a gem dependencies file.  The gem created here
   # has no files, just a gem specification for the given +name+ and +version+.
@@ -1291,7 +1295,7 @@ Also, a list:
   end
 
   def ruby_with_rubygems_in_load_path
-    [Gem.ruby, "-I", File.expand_path("../../lib", __dir__)]
+    [Gem.ruby, "-I", $LOAD_PATH.find{|p| p == File.dirname($LOADED_FEATURES.find{|f| f.end_with?("/rubygems.rb") }) }]
   end
 
   def with_clean_path_to_ruby
