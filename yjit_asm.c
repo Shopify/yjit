@@ -230,8 +230,6 @@ code_page_t *freelist = NULL;
 // Allocate a single code page from a pool of free pages
 code_page_t* alloc_code_page()
 {
-    fprintf(stderr, "allocating code page\n");
-
     // If the free list is empty
     if (!freelist) {
         // Allocate many pages at once
