@@ -30,6 +30,7 @@
 #include "internal/numeric.h"
 #include "internal/object.h"
 #include "internal/struct.h"
+#include "internal/string.h"
 #include "internal/symbol.h"
 #include "internal/variable.h"
 #include "probes.h"
@@ -688,7 +689,6 @@ rb_any_to_s(VALUE obj)
     return str;
 }
 
-VALUE rb_str_escape(VALUE str);
 /*!
  * Convenient wrapper of \c Object#inspect.
  * Returns a human-readable string representation of \a obj,
@@ -3232,19 +3232,23 @@ rb_check_convert_type_with_id(VALUE val, int type, const char *tname, ID method)
 #define try_to_int(val, mid, raise) \
     convert_type_with_id(val, "Integer", mid, raise, -1)
 
-ALWAYS_INLINE(static VALUE rb_to_integer(VALUE val, const char *method, ID mid));
+ALWAYS_INLINE(static VALUE rb_to_integer_with_id_exception(VALUE val, const char *method, ID mid, int raise));
+/* Integer specific rb_check_convert_type_with_id */
 static inline VALUE
-rb_to_integer(VALUE val, const char *method, ID mid)
+rb_to_integer_with_id_exception(VALUE val, const char *method, ID mid, int raise)
 {
     VALUE v;
 
     if (RB_INTEGER_TYPE_P(val)) return val;
-    v = try_to_int(val, mid, TRUE);
+    v = try_to_int(val, mid, raise);
+    if (!raise && NIL_P(v)) return Qnil;
     if (!RB_INTEGER_TYPE_P(v)) {
         conversion_mismatch(val, "Integer", method, v);
     }
     return v;
 }
+#define rb_to_integer(val, method, mid) \
+    rb_to_integer_with_id_exception(val, method, mid, TRUE)
 
 /**
  * Tries to convert \a val into \c Integer.
@@ -3261,8 +3265,7 @@ rb_check_to_integer(VALUE val, const char *method)
 {
     VALUE v;
 
-    if (FIXNUM_P(val)) return val;
-    if (RB_TYPE_P(val, T_BIGNUM)) return val;
+    if (RB_INTEGER_TYPE_P(val)) return val;
     v = convert_type(val, "Integer", method, FALSE);
     if (!RB_INTEGER_TYPE_P(v)) {
         return Qnil;
@@ -3371,6 +3374,12 @@ rb_Integer(VALUE val)
     return rb_convert_to_integer(val, 0, TRUE);
 }
 
+VALUE
+rb_check_integer_type(VALUE val)
+{
+    return rb_to_integer_with_id_exception(val, "to_int", idTo_int, FALSE);
+}
+
 int
 rb_bool_expected(VALUE obj, const char *flagname)
 {
@@ -3378,7 +3387,7 @@ rb_bool_expected(VALUE obj, const char *flagname)
       case Qtrue: case Qfalse:
         break;
       default:
-        rb_raise(rb_eArgError, "true or false is expected as %s: %+"PRIsVALUE,
+        rb_raise(rb_eArgError, "expected true or false as %s: %+"PRIsVALUE,
                  flagname, obj);
     }
     return obj != Qfalse;
@@ -3387,7 +3396,7 @@ rb_bool_expected(VALUE obj, const char *flagname)
 int
 rb_opts_exception_p(VALUE opts, int default_value)
 {
-    static ID kwds[1] = {idException};
+    static const ID kwds[1] = {idException};
     VALUE exception;
     if (rb_get_kwargs(opts, kwds, 0, 1, &exception))
         return rb_bool_expected(exception, "exception");
