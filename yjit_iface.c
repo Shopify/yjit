@@ -1052,9 +1052,11 @@ jitdump_code_load(block_t *block)
         return;
 
     const rb_iseq_t *iseq = block->blockid.iseq;
-    VALUE iseq_label = rb_iseq_label(iseq);
-    const char *function_name = RSTRING_PTR(iseq_label);
-    uint64_t function_name_size = RSTRING_LEN(iseq_label) + 1;
+    VALUE iseq_name = rb_sprintf("%"PRIsVALUE"@%"PRIsVALUE,
+		    rb_iseq_label(iseq),
+		    rb_iseq_path(iseq));
+    const char *function_name = RSTRING_PTR(iseq_name);
+    uint64_t function_name_size = RSTRING_LEN(iseq_name) + 1;
     const char *code = (const char *)cb->mem_block + block->start_pos;
     uint64_t code_size = block->end_pos - block->start_pos;
 
