@@ -400,6 +400,30 @@ END
         a == 0
       end
     end
+
+    assert_block do
+      @a = /a/
+      case 'abc'
+      in ^@a
+        true
+      end
+    end
+
+    assert_block do
+      @@TestPatternMatching = /a/
+      case 'abc'
+      in ^@@TestPatternMatching
+        true
+      end
+    end
+
+    assert_block do
+      $TestPatternMatching = /a/
+      case 'abc'
+      in ^$TestPatternMatching
+        true
+      end
+    end
   end
 
   def test_pin_operator_expr_pattern
@@ -1521,8 +1545,6 @@ END
 
   def test_experimental_warning
     assert_experimental_warning("case [0]; in [*, 0, *]; end")
-    assert_experimental_warning("0 => 0")
-    assert_experimental_warning("0 in a")
   end
 end
 END_of_GUARD

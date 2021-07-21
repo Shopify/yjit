@@ -1,6 +1,7 @@
 require "test/unit"
 
 require "error_highlight"
+require "tempfile"
 
 class ErrorHighlightTest < Test::Unit::TestCase
   class DummyFormatter
@@ -813,9 +814,6 @@ local variable `foo' is not defined for #{ b.inspect }
   def test_multibyte
     assert_error_message(NoMethodError, <<~END) do
 undefined method `あいうえお' for nil:NilClass
-
-      nil.あいうえお
-         ^^^^^^
     END
 
       nil.あいうえお
@@ -1001,5 +999,39 @@ undefined method `time' for 1:Integer
 
   ensure
     ErrorHighlight.formatter = original_formatter
+  end
+
+  def test_hard_tabs
+    Tempfile.create(["error_highlight_test", ".rb"], binmode: true) do |tmp|
+      tmp << "\t \t1.time {}\n"
+      tmp.close
+
+      assert_error_message(NoMethodError, <<~END.gsub("_", "\t")) do
+undefined method `time' for 1:Integer
+
+_ _1.time {}
+_ _ ^^^^^
+    END
+
+        load tmp.path
+      end
+    end
+  end
+
+  def test_no_final_newline
+    Tempfile.create(["error_highlight_test", ".rb"]) do |tmp|
+      tmp << "1.time {}"
+      tmp.close
+
+      assert_error_message(NoMethodError, <<~END) do
+undefined method `time' for 1:Integer
+
+1.time {}
+ ^^^^^
+    END
+
+        load tmp.path
+      end
+    end
   end
 end

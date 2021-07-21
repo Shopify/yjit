@@ -6480,6 +6480,9 @@ iseq_compile_pattern_each(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *c
       case NODE_CONST:
       case NODE_LVAR:
       case NODE_DVAR:
+      case NODE_IVAR:
+      case NODE_CVAR:
+      case NODE_GVAR:
       case NODE_TRUE:
       case NODE_FALSE:
       case NODE_SELF:
@@ -10823,6 +10826,11 @@ ibf_load_code(const struct ibf_load *load, rb_iseq_t *iseq, ibf_offset_t bytecod
                     RHASH_TBL_RAW(v)->type = &cdhash_type;
                     rb_hash_rehash(v); // hash function changed
                     freeze_hide_obj(v);
+
+                    // Overwrite the existing hash in the object list.  This
+                    // is to keep the object alive during load time.
+                    // [Bug #17984] [ruby-core:104259]
+                    pinned_list_store(load->current_buffer->obj_list, (long)op, v);
 
                     code[code_index] = v;
                     RB_OBJ_WRITTEN(iseqv, Qundef, v);

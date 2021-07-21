@@ -523,7 +523,6 @@ static NODE *new_find_pattern(struct parser_params *p, NODE *constant, NODE *fnd
 static NODE *new_find_pattern_tail(struct parser_params *p, ID pre_rest_arg, NODE *args, ID post_rest_arg, const YYLTYPE *loc);
 static NODE *new_hash_pattern(struct parser_params *p, NODE *constant, NODE *hshptn, const YYLTYPE *loc);
 static NODE *new_hash_pattern_tail(struct parser_params *p, NODE *kw_args, ID kw_rest_arg, const YYLTYPE *loc);
-static void warn_one_line_pattern_matching(struct parser_params *p, NODE *node, NODE *pattern, bool right_assign);
 
 static NODE *new_kw_arg(struct parser_params *p, NODE *k, const YYLTYPE *loc);
 static NODE *args_with_numbered(struct parser_params*,NODE*,int);
@@ -1203,7 +1202,7 @@ static int looking_at_eol_p(struct parser_params *p);
 %type <id>   cname fname op f_rest_arg f_block_arg opt_f_block_arg f_norm_arg f_bad_arg
 %type <id>   f_kwrest f_label f_arg_asgn call_op call_op2 reswords relop dot_or_colon
 %type <id>   p_rest p_kwrest p_kwnorest p_any_kwrest p_kw_label
-%type <id>   f_no_kwarg f_any_kwrest args_forward excessed_comma
+%type <id>   f_no_kwarg f_any_kwrest args_forward excessed_comma nonlocal_var
  %type <ctxt> lex_ctxt /* keep <ctxt> in ripper */
 %token END_OF_INPUT 0	"end-of-input"
 %token <id> '.'
@@ -1739,7 +1738,6 @@ expr		: command_call
 			p->ctxt.in_kwarg = $<ctxt>3.in_kwarg;
 		    /*%%%*/
 			$$ = NEW_CASE3($1, NEW_IN($5, 0, 0, &@5), &@$);
-			warn_one_line_pattern_matching(p, $$, $5, true);
 		    /*% %*/
 		    /*% ripper: case!($1, in!($5, Qnil, Qnil)) %*/
 		    }
@@ -1758,7 +1756,6 @@ expr		: command_call
 			p->ctxt.in_kwarg = $<ctxt>3.in_kwarg;
 		    /*%%%*/
 			$$ = NEW_CASE3($1, NEW_IN($5, NEW_TRUE(&@5), NEW_FALSE(&@5), &@5), &@$);
-			warn_one_line_pattern_matching(p, $$, $5, false);
 		    /*% %*/
 		    /*% ripper: case!($1, in!($5, Qnil, Qnil)) %*/
 		    }
@@ -4517,6 +4514,13 @@ p_var_ref	: '^' tIDENTIFIER
 		    /*% %*/
 		    /*% ripper: var_ref!($2) %*/
 		    }
+                | '^' nonlocal_var
+		    {
+		    /*%%%*/
+			if (!($$ = gettable(p, $2, &@$))) $$ = NEW_BEGIN(0, &@$);
+		    /*% %*/
+		    /*% ripper: var_ref!($2) %*/
+                    }
 		;
 
 p_expr_ref	: '^' tLPAREN expr_value ')'
@@ -4991,6 +4995,11 @@ simple_numeric	: tINTEGER
 		| tFLOAT
 		| tRATIONAL
 		| tIMAGINARY
+		;
+
+nonlocal_var    : tIVAR
+		| tGVAR
+		| tCVAR
 		;
 
 user_variable	: tIDENTIFIER
@@ -12138,17 +12147,6 @@ new_hash_pattern_tail(struct parser_params *p, NODE *kw_args, ID kw_rest_arg, co
 
     p->ruby_sourceline = saved_line;
     return node;
-}
-
-static void
-warn_one_line_pattern_matching(struct parser_params *p, NODE *node, NODE *pattern, bool right_assign)
-{
-    enum node_type type;
-    type = nd_type(pattern);
-
-    if (rb_warning_category_enabled_p(RB_WARN_CATEGORY_EXPERIMENTAL) &&
-	!(right_assign && (type == NODE_LASGN || type == NODE_DASGN || type == NODE_DASGN_CURR)))
-	rb_warn0L_experimental(nd_line(node), "One-line pattern matching is experimental, and the behavior may change in future versions of Ruby!");
 }
 
 static NODE*

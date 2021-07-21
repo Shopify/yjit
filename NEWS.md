@@ -14,6 +14,17 @@ Note that each entry is kept to a minimum, see links for details.
     #=> [[3, 5], [5, 7], [11, 13]]
     ```
 
+* Pin operator now supports instance, class, and global variables.
+  [[Feature #17724]]
+
+    ```ruby
+    @n = 5
+    Prime.each_cons(2).lazy.find{_1 in [n, ^@n]}
+    #=> [3, 5]
+    ```
+
+* One-line pattern matching is no longer experimental.
+
 * Multiple assignment evaluation order has been made consistent with
   single assignment evaluation order.  With single assignment, Ruby
   uses a left-to-right evaluation order.  With this code:
@@ -83,6 +94,10 @@ Outstanding ones only.
     * File.dirname now accepts an optional argument for the level to
       strip path components. [[Feature #12194]]
 
+* Integer
+
+    * Integer.try_convert is added. [[Feature #15211]]
+
 * Module
 
     * Module#prepend now modifies the ancestor chain if the receiver
@@ -96,6 +111,8 @@ Outstanding ones only.
       You need to use a Hash literal to set a Hash to a first member.
       [[Feature #16806]]
 
+    * StructClass#keyword_init? is added [[Feature #18008]]
+
 * Queue
 
     * Queue#initialize now accepts an Enumerable of initial values.
@@ -108,7 +125,7 @@ Outstanding ones only.
 * Thread::Backtrace
 
     * Thread::Backtrace.limit, which returns the value to limit backtrace
-      length set by `--backtracse-limit` command line option, is added.
+      length set by `--backtrace-limit` command line option, is added.
       [[Feature #17479]]
 
 * $LOAD_PATH
@@ -180,6 +197,7 @@ Excluding feature bug fixes.
 [Feature #12194]: https://bugs.ruby-lang.org/issues/12194
 [Feature #14256]: https://bugs.ruby-lang.org/issues/14256
 [Feature #15198]: https://bugs.ruby-lang.org/issues/15198
+[Feature #15211]: https://bugs.ruby-lang.org/issues/15211
 [Feature #16043]: https://bugs.ruby-lang.org/issues/16043
 [Feature #16806]: https://bugs.ruby-lang.org/issues/16806
 [Feature #17312]: https://bugs.ruby-lang.org/issues/17312
@@ -188,6 +206,7 @@ Excluding feature bug fixes.
 [Bug #17423]: https://bugs.ruby-lang.org/issues/17423
 [Feature #17479]: https://bugs.ruby-lang.org/issues/17479
 [Feature #17490]: https://bugs.ruby-lang.org/issues/17490
+[Feature #17724]: https://bugs.ruby-lang.org/issues/17724
 [Feature #17744]: https://bugs.ruby-lang.org/issues/17744
 [Feature #17762]: https://bugs.ruby-lang.org/issues/17762
 [Bug #18003]: https://bugs.ruby-lang.org/issues/18003
