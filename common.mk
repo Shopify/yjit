@@ -17380,6 +17380,7 @@ yjit_iface.$(OBJEXT): {$(VPATH)}internal/variable.h
 yjit_iface.$(OBJEXT): {$(VPATH)}internal/warning_push.h
 yjit_iface.$(OBJEXT): {$(VPATH)}internal/xmalloc.h
 yjit_iface.$(OBJEXT): {$(VPATH)}iseq.h
+yjit_iface.$(OBJEXT): {$(VPATH)}jitdump.h
 yjit_iface.$(OBJEXT): {$(VPATH)}method.h
 yjit_iface.$(OBJEXT): {$(VPATH)}missing.h
 yjit_iface.$(OBJEXT): {$(VPATH)}node.h
