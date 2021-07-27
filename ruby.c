@@ -1051,6 +1051,9 @@ setup_yjit_options(const char *s, struct rb_yjit_options *yjit_opt)
     else if (opt_match_noarg(s, l, "stats")) {
         yjit_opt->gen_stats = true;
     }
+    else if (opt_match_noarg(s, l, "test-backend")) {
+        yjit_opt->test_backend = true;
+    }
     else {
         rb_raise(rb_eRuntimeError,
                  "invalid yjit option `%s' (--help will show valid yjit options)", s);
