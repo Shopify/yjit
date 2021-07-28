@@ -90,18 +90,6 @@ ir_opnd_t push_insn_variadic(jitstate_t* jit, ...)
 // Not super safe, but it's the best way I found to deal with the limitations of C99
 #define push_insn(jit, ...) push_insn_variadic(jit, __VA_ARGS__, IR_VOID)
 
-const char* ir_op_name(int op)
-{
-    switch (op)
-    {
-        case OP_ADD: return "add";
-        case OP_MOV: return "mov";
-
-        default:
-        rb_bug("unknown opnd type");
-    }
-}
-
 bool ir_opnd_eq(ir_opnd_t opnd0, ir_opnd_t opnd1)
 {
     if (opnd0.num_bits != opnd1.num_bits)
@@ -115,7 +103,11 @@ bool ir_opnd_eq(ir_opnd_t opnd0, ir_opnd_t opnd1)
     return true;
 }
 
-void print_ir_reg(ir_reg_t reg)
+/*************************************************/
+/* Methods for disassembling the instructions.   */
+/*************************************************/
+
+void ir_print_reg(ir_reg_t reg)
 {
     if (reg.special)
     {
@@ -137,40 +129,52 @@ void print_ir_reg(ir_reg_t reg)
 }
 
 // Print an IR operand
-void print_ir_opnd(ir_opnd_t opnd)
+void ir_print_opnd(ir_opnd_t opnd)
 {
     switch (opnd.kind)
     {
         case EIR_REG:
-        print_ir_reg(opnd.as.reg);
-        return;
+            ir_print_reg(opnd.as.reg);
+            return;
 
         case EIR_MEM:
-        printf("%db[", (int)opnd.num_bits);
-        print_ir_reg(opnd.as.mem.base);
-        if (opnd.as.mem.disp > 0)
-            printf(" + %d]", opnd.as.mem.disp);
-        else
-            printf("]");
-        return;
+            printf("%db[", (int)opnd.num_bits);
+            ir_print_reg(opnd.as.mem.base);
+            if (opnd.as.mem.disp > 0)
+                printf(" + %d]", opnd.as.mem.disp);
+            else
+                printf("]");
+            return;
 
         case EIR_IMM:
-        printf("%lld", (long long)opnd.as.imm);
-        return;
+            printf("%lld", (long long)opnd.as.imm);
+            return;
 
         default:
-        RUBY_ASSERT(false && "unknown opnd type");
+            RUBY_ASSERT(false && "unknown opnd type");
+    }
+}
+
+const char* ir_op_name(int op)
+{
+    switch (op)
+    {
+        case OP_ADD: return "add";
+        case OP_MOV: return "mov";
+        case OP_RET: return "ret";
+
+        default:
+            rb_bug("unknown opnd type");
     }
 }
 
 // Print a list of instructions to stdout for debugging
-void print_ir_insns(insn_array_t insns)
+void ir_print_insns(insn_array_t insns)
 {
     // For each instruction
     rb_darray_for(insns, insn_idx)
     {
         ir_insn_t insn = rb_darray_get(insns, insn_idx);
-
         printf("%s", ir_op_name(insn.op));
 
         // For each operand
@@ -182,60 +186,52 @@ void print_ir_insns(insn_array_t insns)
                 printf(",");
             printf(" ");
 
-            print_ir_opnd(opnd);
+            ir_print_opnd(opnd);
         }
 
         printf(";\n");
     }
 }
 
-// Test code
+/*************************************************/
+/* Convenience methods for pushing instructions. */
+/*************************************************/
+
+ir_opnd_t ir_add(jitstate_t *jit, ir_opnd_t dest, ir_opnd_t src)
+{
+    push_insn(jit, OP_ADD, dest, src);
+    return dest;
+}
+
+ir_opnd_t ir_mov(jitstate_t *jit, ir_opnd_t dest, ir_opnd_t src)
+{
+    push_insn(jit, OP_MOV, dest, src);
+    return dest;
+}
+
+void ir_ret(jitstate_t *jit)
+{
+    push_insn(jit, OP_RET);
+}
+
+/*************************************************/
+/* Tests for the backend.                        */
+/*************************************************/
+
 void test_backend()
 {
     // Object we generate code into, holds a list of IR instructions
-    jitstate_t jit_struct = (jitstate_t){ 0 };
-    jitstate_t* jit = &jit_struct;
-
-
-
+    jitstate_t jitstate = (jitstate_t){ 0 };
+    jitstate_t* jit = &jitstate;
 
     // This is going to need scratch register allocation
-    ir_opnd_t opnd0 = push_insn(jit, OP_MOV, IR_REG(RAX), ir_imm(1));
-    ir_opnd_t opnd1 = push_insn(jit, OP_MOV, IR_REG(RCX), ir_imm(2));
-    ir_opnd_t add0 = push_insn(jit, OP_ADD, opnd0, opnd1);
-    push_insn(jit, OP_RET, add0);
+    ir_opnd_t opnd0 = ir_mov(jit, IR_REG(RAX), ir_imm(1));
+    ir_opnd_t opnd1 = ir_mov(jit, IR_REG(RCX), ir_imm(2));
 
+    ir_add(jit, opnd0, opnd1);
+    ir_ret(jit);
 
-    //print_ir_insns(jit->insns);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    ir_print_insns(jit->insns);
 
     // This is a rough sketch of what codegen could look like, you can ignore/delete it
     /*
