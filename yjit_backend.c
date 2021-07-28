@@ -207,8 +207,9 @@ ir_opnd_t ir_mov(jitstate_t *jit, ir_opnd_t dest, ir_opnd_t src)
     return push_insn(jit, OP_MOV, dest, src);
 }
 
-void ir_ret(jitstate_t *jit)
+void ir_ret(jitstate_t *jit, ir_opnd_t ret)
 {
+    push_insn(jit, OP_MOV, IR_REG(RAX), ret);
     push_insn(jit, OP_RET);
 }
 
@@ -263,14 +264,6 @@ void ir_x86_insns(codeblock_t *cb, insn_array_t insns)
 /* Tests for the backend.                        */
 /*************************************************/
 
-void assert_equal(int64_t expected, int64_t actual, const char *name)
-{
-    if (expected != actual) {
-        fprintf(stderr, "%s failed: expected %lld, got %lld\n", name, expected, actual);
-        exit(-1);
-    }
-}
-
 void test_backend()
 {
     printf("Running backend tests\n");
@@ -287,23 +280,33 @@ void test_backend()
     int (*function)(void);
     function = (int (*)(void))mem_block;
 
-    #define TEST(NAME, BODY) \
+    // Used by the tests to compare function outputs.
+    int64_t expected, actual;
+
+    // A macro for defining test cases. Will set up a jitstate, execute the body
+    // which should create the IR, generate x86 from the IR, and execute it.
+    #define TEST(NAME, EXPECTED, BODY) \
         jitstate = (jitstate_t){ 0 }; \
         BODY \
         ir_x86_insns(cb, jit->insns); \
-        assert_equal(7, function(), NAME);
+        expected = EXPECTED; \
+        actual = function(); \
+        if (expected != actual) { \
+            fprintf(stderr, "%s failed: expected %lld, got %lld\n", NAME, expected, actual); \
+            exit(-1); \
+        }
 
-    TEST("adding with registers", {
+    TEST("adding with registers", 7, {
         ir_opnd_t opnd0 = ir_mov(jit, IR_REG(RAX), ir_imm(3));
         ir_opnd_t opnd1 = ir_mov(jit, IR_REG(RCX), ir_imm(4));
-        ir_add(jit, opnd0, opnd1);
-        ir_ret(jit);
+        ir_opnd_t result = ir_add(jit, opnd0, opnd1);
+        ir_ret(jit, result);
     })
 
-    TEST("adding with a register and an immediate", {
+    TEST("adding with a register and an immediate", 7, {
         ir_opnd_t opnd0 = ir_mov(jit, IR_REG(RAX), ir_imm(3));
-        ir_add(jit, opnd0, ir_imm(4));
-        ir_ret(jit);
+        ir_opnd_t result = ir_add(jit, opnd0, ir_imm(4));
+        ir_ret(jit, result);
     })
 
     #undef TEST
