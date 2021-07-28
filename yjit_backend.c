@@ -217,6 +217,16 @@ void ir_ret(jitstate_t *jit, ir_opnd_t ret)
 /* Generate x86 code from the IR.                */
 /*************************************************/
 
+// A structure for keeping track of the live intervals within the instruction
+// list of various variables.
+typedef struct yjit_ir_live_interval_t
+{
+    uint8_t start;
+    uint8_t end;
+} ir_live_interval_t;
+
+typedef rb_darray(ir_live_interval_t) live_interval_array_t;
+
 x86opnd_t ir_x86_opnd(insn_array_t insns, ir_opnd_t opnd)
 {
     switch (opnd.kind)
@@ -226,6 +236,8 @@ x86opnd_t ir_x86_opnd(insn_array_t insns, ir_opnd_t opnd)
         case EIR_IMM:
             return (x86opnd_t){ OPND_IMM, sig_imm_size(opnd.as.imm), .as.imm = opnd.as.imm };
         case EIR_INSN_OUT: {
+            // Temporary cheating way of handling register allocation that will
+            // only work for certain instructions.
             ir_insn_t insn = rb_darray_get(insns, opnd.as.idx);
             return ir_x86_opnd(insns, rb_darray_get(insn.opnds, 0));
         }
@@ -237,11 +249,11 @@ x86opnd_t ir_x86_opnd(insn_array_t insns, ir_opnd_t opnd)
 void ir_x86_insns(codeblock_t *cb, insn_array_t insns)
 {
     cb_set_pos(cb, 0);
-    ir_insn_t insn;
+    live_interval_array_t live_intervals = (live_interval_array_t){ 0 };
 
     rb_darray_for(insns, insn_idx)
     {
-        insn = rb_darray_get(insns, insn_idx);
+        ir_insn_t insn = rb_darray_get(insns, insn_idx);
 
         switch (insn.op)
         {
