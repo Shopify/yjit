@@ -215,23 +215,95 @@ void ir_ret(jitstate_t *jit)
 }
 
 /*************************************************/
+/* Generate x86 code from the IR.                */
+/*************************************************/
+
+x86opnd_t ir_x86_opnd(ir_opnd_t opnd)
+{
+    switch (opnd.kind)
+    {
+        case EIR_REG:
+            return (x86opnd_t){ OPND_REG, 64, .as.reg = { REG_GP, opnd.as.reg.idx } };
+        case EIR_IMM:
+            return (x86opnd_t){ OPND_IMM, sig_imm_size(opnd.as.imm), .as.imm = opnd.as.imm };
+        default:
+            RUBY_ASSERT(false && "unknown opnd kind");
+    }
+}
+
+void ir_x86_insn(codeblock_t *cb, ir_insn_t insn)
+{
+    switch (insn.op)
+    {
+        case OP_ADD:
+            add(cb, ir_x86_opnd(rb_darray_get(insn.opnds, 0)), ir_x86_opnd(rb_darray_get(insn.opnds, 1)));
+            return;
+        case OP_MOV:
+            mov(cb, ir_x86_opnd(rb_darray_get(insn.opnds, 0)), ir_x86_opnd(rb_darray_get(insn.opnds, 1)));
+            return;
+        case OP_RET:
+            ret(cb);
+            return;
+        default:
+            RUBY_ASSERT(false && "unknown op type");
+    }
+}
+
+void ir_x86_insns(codeblock_t *cb, insn_array_t insns)
+{
+    cb_set_pos(cb, 0);
+
+    rb_darray_for(insns, insn_idx)
+    {
+        ir_x86_insn(cb, rb_darray_get(insns, insn_idx));
+    }
+}
+
+/*************************************************/
 /* Tests for the backend.                        */
 /*************************************************/
 
+void assert_equal(expected, actual)
+{
+    if (expected != actual) {
+        fprintf(stderr, "expected %d, got %d\n", expected, actual);
+        exit(-1);
+    }
+}
+
 void test_backend()
 {
-    // Object we generate code into, holds a list of IR instructions
-    jitstate_t jitstate = (jitstate_t){ 0 };
+    printf("Running backend tests\n");
+
+    jitstate_t jitstate;
     jitstate_t* jit = &jitstate;
 
-    // This is going to need scratch register allocation
-    ir_opnd_t opnd0 = ir_mov(jit, IR_REG(RAX), ir_imm(1));
-    ir_opnd_t opnd1 = ir_mov(jit, IR_REG(RCX), ir_imm(2));
+    codeblock_t codeblock;
+    codeblock_t* cb = &codeblock;
 
-    ir_add(jit, opnd0, opnd1);
-    ir_ret(jit);
+    uint8_t* mem_block = alloc_exec_mem(4096);
+    cb_init(cb, mem_block, 4096);
 
-    ir_print_insns(jit->insns);
+    int (*function)(void);
+    function = (int (*)(void))mem_block;
+
+    #define TEST(BODY) \
+        jitstate = (jitstate_t){ 0 }; \
+        BODY \
+        ir_x86_insns(cb, jit->insns); \
+        assert_equal(7, function());
+
+    TEST({
+        ir_opnd_t opnd0 = ir_mov(jit, IR_REG(RAX), ir_imm(3));
+        ir_opnd_t opnd1 = ir_mov(jit, IR_REG(RCX), ir_imm(4));
+
+        ir_add(jit, opnd0, opnd1);
+        ir_ret(jit);
+    })
+
+    #undef TEST
+
+    printf("Backend tests done\n");
 
     // This is a rough sketch of what codegen could look like, you can ignore/delete it
     /*
