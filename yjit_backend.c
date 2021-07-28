@@ -199,14 +199,12 @@ void ir_print_insns(insn_array_t insns)
 
 ir_opnd_t ir_add(jitstate_t *jit, ir_opnd_t dest, ir_opnd_t src)
 {
-    push_insn(jit, OP_ADD, dest, src);
-    return dest;
+    return push_insn(jit, OP_ADD, dest, src);
 }
 
 ir_opnd_t ir_mov(jitstate_t *jit, ir_opnd_t dest, ir_opnd_t src)
 {
-    push_insn(jit, OP_MOV, dest, src);
-    return dest;
+    return push_insn(jit, OP_MOV, dest, src);
 }
 
 void ir_ret(jitstate_t *jit)
@@ -218,7 +216,7 @@ void ir_ret(jitstate_t *jit)
 /* Generate x86 code from the IR.                */
 /*************************************************/
 
-x86opnd_t ir_x86_opnd(ir_opnd_t opnd)
+x86opnd_t ir_x86_opnd(insn_array_t insns, ir_opnd_t opnd)
 {
     switch (opnd.kind)
     {
@@ -226,36 +224,38 @@ x86opnd_t ir_x86_opnd(ir_opnd_t opnd)
             return (x86opnd_t){ OPND_REG, 64, .as.reg = { REG_GP, opnd.as.reg.idx } };
         case EIR_IMM:
             return (x86opnd_t){ OPND_IMM, sig_imm_size(opnd.as.imm), .as.imm = opnd.as.imm };
+        case EIR_INSN_OUT: {
+            ir_insn_t insn = rb_darray_get(insns, opnd.as.idx);
+            return ir_x86_opnd(insns, rb_darray_get(insn.opnds, 0));
+        }
         default:
             RUBY_ASSERT(false && "unknown opnd kind");
-    }
-}
-
-void ir_x86_insn(codeblock_t *cb, ir_insn_t insn)
-{
-    switch (insn.op)
-    {
-        case OP_ADD:
-            add(cb, ir_x86_opnd(rb_darray_get(insn.opnds, 0)), ir_x86_opnd(rb_darray_get(insn.opnds, 1)));
-            return;
-        case OP_MOV:
-            mov(cb, ir_x86_opnd(rb_darray_get(insn.opnds, 0)), ir_x86_opnd(rb_darray_get(insn.opnds, 1)));
-            return;
-        case OP_RET:
-            ret(cb);
-            return;
-        default:
-            RUBY_ASSERT(false && "unknown op type");
     }
 }
 
 void ir_x86_insns(codeblock_t *cb, insn_array_t insns)
 {
     cb_set_pos(cb, 0);
+    ir_insn_t insn;
 
     rb_darray_for(insns, insn_idx)
     {
-        ir_x86_insn(cb, rb_darray_get(insns, insn_idx));
+        insn = rb_darray_get(insns, insn_idx);
+
+        switch (insn.op)
+        {
+            case OP_ADD:
+                add(cb, ir_x86_opnd(insns, rb_darray_get(insn.opnds, 0)), ir_x86_opnd(insns, rb_darray_get(insn.opnds, 1)));
+                break;
+            case OP_MOV:
+                mov(cb, ir_x86_opnd(insns, rb_darray_get(insn.opnds, 0)), ir_x86_opnd(insns, rb_darray_get(insn.opnds, 1)));
+                break;
+            case OP_RET:
+                ret(cb);
+                break;
+            default:
+                RUBY_ASSERT(false && "unknown op type");
+        }
     }
 }
 
