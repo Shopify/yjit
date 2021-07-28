@@ -263,10 +263,10 @@ void ir_x86_insns(codeblock_t *cb, insn_array_t insns)
 /* Tests for the backend.                        */
 /*************************************************/
 
-void assert_equal(expected, actual)
+void assert_equal(int64_t expected, int64_t actual, const char *name)
 {
     if (expected != actual) {
-        fprintf(stderr, "expected %d, got %d\n", expected, actual);
+        fprintf(stderr, "%s failed: expected %lld, got %lld\n", name, expected, actual);
         exit(-1);
     }
 }
@@ -287,17 +287,22 @@ void test_backend()
     int (*function)(void);
     function = (int (*)(void))mem_block;
 
-    #define TEST(BODY) \
+    #define TEST(NAME, BODY) \
         jitstate = (jitstate_t){ 0 }; \
         BODY \
         ir_x86_insns(cb, jit->insns); \
-        assert_equal(7, function());
+        assert_equal(7, function(), NAME);
 
-    TEST({
+    TEST("adding with registers", {
         ir_opnd_t opnd0 = ir_mov(jit, IR_REG(RAX), ir_imm(3));
         ir_opnd_t opnd1 = ir_mov(jit, IR_REG(RCX), ir_imm(4));
-
         ir_add(jit, opnd0, opnd1);
+        ir_ret(jit);
+    })
+
+    TEST("adding with a register and an immediate", {
+        ir_opnd_t opnd0 = ir_mov(jit, IR_REG(RAX), ir_imm(3));
+        ir_add(jit, opnd0, ir_imm(4));
         ir_ret(jit);
     })
 
