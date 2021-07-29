@@ -175,7 +175,7 @@ const char* ir_op_name(int op)
         case OP_RET: return "ret";
 
         default:
-            rb_bug("unknown opnd type");
+            RUBY_ASSERT(false && "unknown opnd type");
     }
 }
 
@@ -243,9 +243,57 @@ x86opnd_t ir_x86_opnd(insn_array_t insns, ir_opnd_t opnd)
         case EIR_REG:
             return (x86opnd_t){ OPND_REG, 64, .as.reg = { REG_GP, opnd.as.reg.idx } };
         case EIR_IMM:
-            return (x86opnd_t){ OPND_IMM, sig_imm_size(opnd.as.imm), .as.imm = opnd.as.imm };
+            return (x86opnd_t){ OPND_IMM, opnd.num_bits, .as.imm = opnd.as.imm };
+        case EIR_INSN_OUT: {
+            // Temporary cheating way of handling register allocation that will
+            // only work for certain instructions.
+            ir_insn_t insn = rb_darray_get(insns, opnd.as.idx);
+            return ir_x86_opnd(insns, rb_darray_get(insn.opnds, 0));
+        }
         default:
             RUBY_ASSERT(false && "unknown opnd kind");
+    }
+}
+
+// Fetch a free scratch register and mark it as active.
+int32_t ir_next_scratch(bool active[NUM_SCR_REGS])
+{
+    for (int32_t index = 0; index < NUM_SCR_REGS; index++) {
+        if (!active[index]) {
+            return index;
+        }
+    }
+    RUBY_ASSERT(false && "out of free registers");
+}
+
+// Write out x86 instructions into the codeblock for the given IR instructions
+void ir_x86_insns(codeblock_t *cb, insn_array_t insns)
+{
+    // Initialize a list of booleans that corresponds to whether or not the
+    // register at that given index is currently active.
+    // bool active[NUM_SCR_REGS];
+    // for (int32_t index = 0; index < NUM_SCR_REGS; index++)
+    //     active[index] = false;
+
+    cb_set_pos(cb, 0);
+
+    rb_darray_for(insns, insn_idx)
+    {
+        ir_insn_t insn = rb_darray_get(insns, insn_idx);
+
+        switch (insn.op) {
+            case OP_ADD:
+                add(cb, ir_x86_opnd(insns, rb_darray_get(insn.opnds, 0)), ir_x86_opnd(insns, rb_darray_get(insn.opnds, 1)));
+                break;
+            case OP_MOV:
+                mov(cb, ir_x86_opnd(insns, rb_darray_get(insn.opnds, 0)), ir_x86_opnd(insns, rb_darray_get(insn.opnds, 1)));
+                break;
+            case OP_RET:
+                ret(cb);
+                break;
+            default:
+                RUBY_ASSERT(false && "unsupported insn op");
+        }
     }
 }
 
@@ -288,48 +336,40 @@ void test_backend()
     int (*function)(void);
     function = (int (*)(void))mem_block;
 
-    jitstate = (jitstate_t){ 0 };
-
-    ir_opnd_t result = ir_add(jit, ir_imm(1), ir_imm(2));
-    ir_mov(jit, IR_REG(RAX), ir_add(jit, ir_add(jit, ir_add(jit, ir_imm(1), ir_imm(2)), ir_imm(4)), result));
-
-    ir_print_insns(jit);
-    ir_print_to_dot(jit->insns);
-
-    // printf("Running backend tests\n");
+    printf("Running backend tests\n");
 
     // Used by the tests to compare function outputs.
-    // int64_t expected, actual;
+    int64_t expected, actual;
 
     // A macro for defining test cases. Will set up a jitstate, execute the body
     // which should create the IR, generate x86 from the IR, and execute it.
-    // #define TEST(NAME, EXPECTED, BODY) \
-    //     jitstate = (jitstate_t){ 0 }; \
-    //     BODY \
-    //     ir_x86_insns(cb, jit->insns); \
-    //     expected = EXPECTED; \
-    //     actual = function(); \
-    //     if (expected != actual) { \
-    //         fprintf(stderr, "%s failed: expected %lld, got %lld\n", NAME, expected, actual); \
-    //         exit(-1); \
-    //     }
+    #define TEST(NAME, EXPECTED, BODY) \
+        jitstate = (jitstate_t){ 0 }; \
+        BODY \
+        ir_x86_insns(cb, jit->insns); \
+        expected = EXPECTED; \
+        actual = function(); \
+        if (expected != actual) { \
+            fprintf(stderr, "%s failed: expected %lld, got %lld\n", NAME, expected, actual); \
+            exit(-1); \
+        }
 
-    // TEST("adding with registers", 7, {
-    //     ir_opnd_t opnd0 = ir_mov(jit, IR_REG(RAX), ir_imm(3));
-    //     ir_opnd_t opnd1 = ir_mov(jit, IR_REG(RCX), ir_imm(4));
-    //     ir_mov(jit, IR_REG(RAX), ir_add(jit, opnd0, opnd1));
-    //     ir_ret(jit);
-    // })
+    TEST("adding with registers", 7, {
+        ir_opnd_t opnd0 = ir_mov(jit, IR_REG(RAX), ir_imm(3));
+        ir_opnd_t opnd1 = ir_mov(jit, IR_REG(RCX), ir_imm(4));
+        ir_mov(jit, IR_REG(RAX), ir_add(jit, opnd0, opnd1));
+        ir_ret(jit);
+    })
 
-    // TEST("adding with a register and an immediate", 7, {
-    //     ir_opnd_t opnd0 = ir_mov(jit, IR_REG(RAX), ir_imm(3));
-    //     ir_mov(jit, IR_REG(RAX), ir_add(jit, opnd0, ir_imm(4)));
-    //     ir_ret(jit);
-    // })
+    TEST("adding with a register and an immediate", 7, {
+        ir_opnd_t opnd0 = ir_mov(jit, IR_REG(RAX), ir_imm(3));
+        ir_mov(jit, IR_REG(RAX), ir_add(jit, opnd0, ir_imm(4)));
+        ir_ret(jit);
+    })
 
-    // #undef TEST
+    #undef TEST
 
-    // printf("Backend tests done\n");
+    printf("Backend tests done\n");
 
     // This is a rough sketch of what codegen could look like, you can ignore/delete it
     /*
