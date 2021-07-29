@@ -3928,9 +3928,6 @@ define_final0(VALUE obj, VALUE block)
 
     RBASIC(obj)->flags |= FL_FINALIZE;
 
-    block = rb_ary_new3(2, INT2FIX(0), block);
-    OBJ_FREEZE(block);
-
     if (st_lookup(finalizer_table, obj, &data)) {
 	table = (VALUE)data;
 
@@ -3941,8 +3938,9 @@ define_final0(VALUE obj, VALUE block)
 
             for (i = 0; i < len; i++) {
                 VALUE recv = RARRAY_AREF(table, i);
-                if (rb_funcall(recv, idEq, 1, block)) {
-                    return recv;
+                if (rb_equal(recv, block)) {
+                    block = recv;
+                    goto end;
 		}
 	    }
 	}
@@ -3954,6 +3952,9 @@ define_final0(VALUE obj, VALUE block)
 	RBASIC_CLEAR_CLASS(table);
 	st_add_direct(finalizer_table, obj, table);
     }
+  end:
+    block = rb_ary_new3(2, INT2FIX(0), block);
+    OBJ_FREEZE(block);
     return block;
 }
 
@@ -3981,10 +3982,19 @@ rb_gc_copy_finalizer(VALUE dest, VALUE obj)
 }
 
 static VALUE
-run_single_final(VALUE final, VALUE objid)
+run_single_final(VALUE cmd, VALUE objid)
 {
-    const VALUE cmd = RARRAY_AREF(final, 1);
     return rb_check_funcall(cmd, idCall, 1, &objid);
+}
+
+static void
+warn_exception_in_finalizer(rb_execution_context_t *ec, VALUE final)
+{
+    if (final != Qundef && !NIL_P(ruby_verbose)) {
+	VALUE errinfo = ec->errinfo;
+	rb_warn("Exception in finalizer %+"PRIsVALUE, final);
+	rb_ec_error_print(ec, errinfo);
+    }
 }
 
 static void
@@ -3995,28 +4005,31 @@ run_finalizer(rb_objspace_t *objspace, VALUE obj, VALUE table)
     volatile struct {
 	VALUE errinfo;
 	VALUE objid;
+	VALUE final;
 	rb_control_frame_t *cfp;
 	long finished;
     } saved;
     rb_execution_context_t * volatile ec = GET_EC();
 #define RESTORE_FINALIZER() (\
 	ec->cfp = saved.cfp, \
-	rb_set_errinfo(saved.errinfo))
+	ec->errinfo = saved.errinfo)
 
-    saved.errinfo = rb_errinfo();
+    saved.errinfo = ec->errinfo;
     saved.objid = rb_obj_id(obj);
     saved.cfp = ec->cfp;
     saved.finished = 0;
+    saved.final = Qundef;
 
     EC_PUSH_TAG(ec);
     state = EC_EXEC_TAG();
     if (state != TAG_NONE) {
 	++saved.finished;	/* skip failed finalizer */
+	warn_exception_in_finalizer(ec, ATOMIC_VALUE_EXCHANGE(saved.final, Qundef));
     }
     for (i = saved.finished;
 	 RESTORE_FINALIZER(), i<RARRAY_LEN(table);
 	 saved.finished = ++i) {
-	run_single_final(RARRAY_AREF(table, i), saved.objid);
+	run_single_final(saved.final = RARRAY_AREF(table, i), saved.objid);
     }
     EC_POP_TAG();
 #undef RESTORE_FINALIZER
@@ -4056,14 +4069,13 @@ finalize_list(rb_objspace_t *objspace, VALUE zombie)
                 obj_free_object_id(objspace, zombie);
             }
 
-            RZOMBIE(zombie)->basic.flags = 0;
             GC_ASSERT(heap_pages_final_slots > 0);
             GC_ASSERT(page->final_slots > 0);
 
             heap_pages_final_slots--;
             page->final_slots--;
             page->free_slots++;
-            heap_page_add_freeobj(objspace, GET_HEAP_PAGE(zombie), zombie);
+            heap_page_add_freeobj(objspace, page, zombie);
             objspace->profile.total_freed_objects++;
         }
         RB_VM_LOCK_LEAVE();
@@ -7497,9 +7509,9 @@ check_children_i(const VALUE child, void *ptr)
 }
 
 static int
-verify_internal_consistency_i(void *page_start, void *page_end, size_t stride, void *ptr)
+verify_internal_consistency_i(void *page_start, void *page_end, size_t stride,
+                              struct verify_internal_consistency_struct *data)
 {
-    struct verify_internal_consistency_struct *data = (struct verify_internal_consistency_struct *)ptr;
     VALUE obj;
     rb_objspace_t *objspace = data->objspace;
 
@@ -7702,8 +7714,10 @@ gc_verify_internal_consistency_(rb_objspace_t *objspace)
     gc_report(5, objspace, "gc_verify_internal_consistency: start\n");
 
     /* check relations */
-
-    objspace_each_objects(objspace, verify_internal_consistency_i, &data, FALSE);
+    for (size_t i = 0; i < heap_allocated_pages; i++) {
+        struct heap_page *page = heap_pages_sorted[i];
+        verify_internal_consistency_i(page->start, page->start + page->total_slots, sizeof(RVALUE), &data);
+    }
 
     if (data.err_count != 0) {
 #if RGENGC_CHECK_MODE >= 5
@@ -7756,8 +7770,7 @@ gc_verify_internal_consistency_(rb_objspace_t *objspace)
 	if (heap_pages_final_slots != data.zombie_object_count ||
 	    heap_pages_final_slots != list_count) {
 
-            // TODO: debug it
-            rb_warn("inconsistent finalizing object count:\n"
+            rb_bug("inconsistent finalizing object count:\n"
                     "  expect %"PRIuSIZE"\n"
                     "  but    %"PRIuSIZE" zombies\n"
                     "  heap_pages_deferred_final list has %"PRIuSIZE" items.",
