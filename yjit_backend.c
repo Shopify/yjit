@@ -39,11 +39,13 @@ ir_opnd_t ir_mem(uint8_t num_bits, ir_opnd_t base, int32_t disp)
     };
 }
 
+typedef rb_darray(int32_t) live_ranges_t;
+
 // Fake/temporaty JIT state object for testing/experimenting
 typedef struct yjit_jit_state
 {
     insn_array_t insns;
-
+    live_ranges_t live_ranges;
 } jitstate_t;
 
 ir_opnd_t push_insn_variadic(jitstate_t* jit, ...)
@@ -57,13 +59,17 @@ ir_opnd_t push_insn_variadic(jitstate_t* jit, ...)
     RUBY_ASSERT(op >= 0);
     RUBY_ASSERT(op < OP_MAX);
 
-    ir_insn_t insn = (ir_insn_t){
-        .op = op
-    };
+    ir_insn_t insn = (ir_insn_t){ .op = op };
+    int32_t insn_index = rb_darray_size(jit->insns);
 
     // For each operand
     for (size_t opnd_idx = 0;; ++opnd_idx) {
         ir_opnd_t opnd = va_arg(args, ir_opnd_t);
+
+        // If this operand is the output of a previous instruction, then update
+        // the end of the live range
+        if (opnd.kind == EIR_INSN_OUT)
+            rb_darray_set(jit->live_ranges, opnd.as.idx, insn_index);
 
         // End of the operand list
         if (opnd.kind == EIR_VOID)
@@ -79,11 +85,12 @@ ir_opnd_t push_insn_variadic(jitstate_t* jit, ...)
 
     rb_darray_append(&jit->insns, insn);
 
+    // Set the initial lifetime of the output of this instruction to just be the
+    // current index (as we haven't seen it live beyond that).
+    rb_darray_append(&jit->live_ranges, insn_index);
+
     // Return an operand which is the output of this instruction
-    return (ir_opnd_t) {
-        .kind = EIR_INSN_OUT,
-        .as.idx = rb_darray_size(jit->insns) - 1
-    };
+    return (ir_opnd_t) { .kind = EIR_INSN_OUT, .as.idx = insn_index };
 }
 
 // We use a dummy IR_VOID argument to signal the end of the operands
@@ -150,6 +157,10 @@ void ir_print_opnd(ir_opnd_t opnd)
             printf("%lld", (long long)opnd.as.imm);
             return;
 
+        case EIR_INSN_OUT:
+            printf("[%d]", opnd.as.idx);
+            return;
+
         default:
             RUBY_ASSERT(false && "unknown opnd type");
     }
@@ -169,13 +180,15 @@ const char* ir_op_name(int op)
 }
 
 // Print a list of instructions to stdout for debugging
-void ir_print_insns(insn_array_t insns)
+void ir_print_insns(jitstate_t *jit)
 {
     // For each instruction
-    rb_darray_for(insns, insn_idx)
+    rb_darray_for(jit->insns, insn_idx)
     {
-        ir_insn_t insn = rb_darray_get(insns, insn_idx);
-        printf("%s", ir_op_name(insn.op));
+        ir_insn_t insn = rb_darray_get(jit->insns, insn_idx);
+        int32_t live_range = rb_darray_get(jit->live_ranges, insn_idx);
+
+        printf("[%d] %s", insn_idx, ir_op_name(insn.op));
 
         // For each operand
         rb_darray_for(insn.opnds, opnd_idx)
@@ -189,7 +202,14 @@ void ir_print_insns(insn_array_t insns)
             ir_print_opnd(opnd);
         }
 
-        printf(";\n");
+        printf(";");
+
+        // If the output of this instruction lives beyond it, then output how
+        // long it will stay alive.
+        if (live_range != insn_idx)
+            printf(" (live until [%d])", live_range);
+
+        printf("\n");
     }
 }
 
@@ -207,25 +227,14 @@ ir_opnd_t ir_mov(jitstate_t *jit, ir_opnd_t dest, ir_opnd_t src)
     return push_insn(jit, OP_MOV, dest, src);
 }
 
-void ir_ret(jitstate_t *jit, ir_opnd_t ret)
+void ir_ret(jitstate_t *jit)
 {
-    push_insn(jit, OP_MOV, IR_REG(RAX), ret);
     push_insn(jit, OP_RET);
 }
 
 /*************************************************/
 /* Generate x86 code from the IR.                */
 /*************************************************/
-
-// A structure for keeping track of the live intervals within the instruction
-// list of various variables.
-typedef struct yjit_ir_live_interval_t
-{
-    uint8_t start;
-    uint8_t end;
-} ir_live_interval_t;
-
-typedef rb_darray(ir_live_interval_t) live_interval_array_t;
 
 x86opnd_t ir_x86_opnd(insn_array_t insns, ir_opnd_t opnd)
 {
@@ -235,41 +244,30 @@ x86opnd_t ir_x86_opnd(insn_array_t insns, ir_opnd_t opnd)
             return (x86opnd_t){ OPND_REG, 64, .as.reg = { REG_GP, opnd.as.reg.idx } };
         case EIR_IMM:
             return (x86opnd_t){ OPND_IMM, sig_imm_size(opnd.as.imm), .as.imm = opnd.as.imm };
-        case EIR_INSN_OUT: {
-            // Temporary cheating way of handling register allocation that will
-            // only work for certain instructions.
-            ir_insn_t insn = rb_darray_get(insns, opnd.as.idx);
-            return ir_x86_opnd(insns, rb_darray_get(insn.opnds, 0));
-        }
         default:
             RUBY_ASSERT(false && "unknown opnd kind");
     }
 }
 
-void ir_x86_insns(codeblock_t *cb, insn_array_t insns)
+void ir_print_to_dot(insn_array_t insns)
 {
-    cb_set_pos(cb, 0);
-    live_interval_array_t live_intervals = (live_interval_array_t){ 0 };
+    printf("digraph {\n");
 
     rb_darray_for(insns, insn_idx)
     {
         ir_insn_t insn = rb_darray_get(insns, insn_idx);
+        printf("  %d [label=\"[%d] %s\"];\n", insn_idx, insn_idx, ir_op_name(insn.op));
 
-        switch (insn.op)
+        rb_darray_for(insn.opnds, opnd_idx)
         {
-            case OP_ADD:
-                add(cb, ir_x86_opnd(insns, rb_darray_get(insn.opnds, 0)), ir_x86_opnd(insns, rb_darray_get(insn.opnds, 1)));
-                break;
-            case OP_MOV:
-                mov(cb, ir_x86_opnd(insns, rb_darray_get(insn.opnds, 0)), ir_x86_opnd(insns, rb_darray_get(insn.opnds, 1)));
-                break;
-            case OP_RET:
-                ret(cb);
-                break;
-            default:
-                RUBY_ASSERT(false && "unknown op type");
+            ir_opnd_t opnd = rb_darray_get(insn.opnds, opnd_idx);
+            if (opnd.kind == EIR_INSN_OUT) {
+                printf("  %d -> %d\n", opnd.as.idx, insn_idx);
+            }
         }
     }
+
+    printf("}\n");
 }
 
 /*************************************************/
@@ -278,8 +276,6 @@ void ir_x86_insns(codeblock_t *cb, insn_array_t insns)
 
 void test_backend()
 {
-    printf("Running backend tests\n");
-
     jitstate_t jitstate;
     jitstate_t* jit = &jitstate;
 
@@ -292,38 +288,48 @@ void test_backend()
     int (*function)(void);
     function = (int (*)(void))mem_block;
 
+    jitstate = (jitstate_t){ 0 };
+
+    ir_opnd_t result = ir_add(jit, ir_imm(1), ir_imm(2));
+    ir_mov(jit, IR_REG(RAX), ir_add(jit, ir_add(jit, ir_add(jit, ir_imm(1), ir_imm(2)), ir_imm(4)), result));
+
+    ir_print_insns(jit);
+    ir_print_to_dot(jit->insns);
+
+    // printf("Running backend tests\n");
+
     // Used by the tests to compare function outputs.
-    int64_t expected, actual;
+    // int64_t expected, actual;
 
     // A macro for defining test cases. Will set up a jitstate, execute the body
     // which should create the IR, generate x86 from the IR, and execute it.
-    #define TEST(NAME, EXPECTED, BODY) \
-        jitstate = (jitstate_t){ 0 }; \
-        BODY \
-        ir_x86_insns(cb, jit->insns); \
-        expected = EXPECTED; \
-        actual = function(); \
-        if (expected != actual) { \
-            fprintf(stderr, "%s failed: expected %lld, got %lld\n", NAME, expected, actual); \
-            exit(-1); \
-        }
+    // #define TEST(NAME, EXPECTED, BODY) \
+    //     jitstate = (jitstate_t){ 0 }; \
+    //     BODY \
+    //     ir_x86_insns(cb, jit->insns); \
+    //     expected = EXPECTED; \
+    //     actual = function(); \
+    //     if (expected != actual) { \
+    //         fprintf(stderr, "%s failed: expected %lld, got %lld\n", NAME, expected, actual); \
+    //         exit(-1); \
+    //     }
 
-    TEST("adding with registers", 7, {
-        ir_opnd_t opnd0 = ir_mov(jit, IR_REG(RAX), ir_imm(3));
-        ir_opnd_t opnd1 = ir_mov(jit, IR_REG(RCX), ir_imm(4));
-        ir_opnd_t result = ir_add(jit, opnd0, opnd1);
-        ir_ret(jit, result);
-    })
+    // TEST("adding with registers", 7, {
+    //     ir_opnd_t opnd0 = ir_mov(jit, IR_REG(RAX), ir_imm(3));
+    //     ir_opnd_t opnd1 = ir_mov(jit, IR_REG(RCX), ir_imm(4));
+    //     ir_mov(jit, IR_REG(RAX), ir_add(jit, opnd0, opnd1));
+    //     ir_ret(jit);
+    // })
 
-    TEST("adding with a register and an immediate", 7, {
-        ir_opnd_t opnd0 = ir_mov(jit, IR_REG(RAX), ir_imm(3));
-        ir_opnd_t result = ir_add(jit, opnd0, ir_imm(4));
-        ir_ret(jit, result);
-    })
+    // TEST("adding with a register and an immediate", 7, {
+    //     ir_opnd_t opnd0 = ir_mov(jit, IR_REG(RAX), ir_imm(3));
+    //     ir_mov(jit, IR_REG(RAX), ir_add(jit, opnd0, ir_imm(4)));
+    //     ir_ret(jit);
+    // })
 
-    #undef TEST
+    // #undef TEST
 
-    printf("Backend tests done\n");
+    // printf("Backend tests done\n");
 
     // This is a rough sketch of what codegen could look like, you can ignore/delete it
     /*
