@@ -1803,7 +1803,7 @@ rb_iter_break_value(VALUE val)
 
 /* optimization: redefine management */
 
-static st_table *vm_opt_method_table = 0;
+static st_table *vm_opt_method_def_table = 0;
 static st_table *vm_opt_mid_table = 0;
 
 static int
@@ -1857,12 +1857,11 @@ rb_vm_check_redefinition_opt_method(const rb_method_entry_t *me, VALUE klass)
        klass = RBASIC_CLASS(klass);
     }
     if (vm_redefinition_check_method_type(me->def)) {
-	if (st_lookup(vm_opt_method_table, (st_data_t)me, &bop)) {
-	    int flag = vm_redefinition_check_flag(klass);
+        if (st_lookup(vm_opt_method_def_table, (st_data_t)me->def, &bop)) {
+            int flag = vm_redefinition_check_flag(klass);
             rb_yjit_bop_redefined(klass, me, (enum ruby_basic_operators)bop);
-
-	    ruby_vm_redefined_flag[bop] |= flag;
-	}
+	        ruby_vm_redefined_flag[bop] |= flag;
+        }
     }
 }
 
@@ -1891,7 +1890,7 @@ add_opt_method(VALUE klass, ID mid, VALUE bop)
     const rb_method_entry_t *me = rb_method_entry_at(klass, mid);
 
     if (me && vm_redefinition_check_method_type(me->def)) {
-	st_insert(vm_opt_method_table, (st_data_t)me, (st_data_t)bop);
+	st_insert(vm_opt_method_def_table, (st_data_t)me->def, (st_data_t)bop);
 	st_insert(vm_opt_mid_table, (st_data_t)mid, (st_data_t)Qtrue);
     }
     else {
@@ -1905,7 +1904,7 @@ vm_init_redefined_flag(void)
     ID mid;
     VALUE bop;
 
-    vm_opt_method_table = st_init_numtable();
+    vm_opt_method_def_table = st_init_numtable();
     vm_opt_mid_table = st_init_numtable();
 
 #define OP(mid_, bop_) (mid = id##mid_, bop = BOP_##bop_, ruby_vm_redefined_flag[bop] = 0)
@@ -2174,7 +2173,7 @@ vm_exec(rb_execution_context_t *ec, bool mjit_enable_p)
     }
     else {
 	result = ec->errinfo;
-        rb_ec_raised_reset(ec, RAISED_STACKOVERFLOW);
+        rb_ec_raised_reset(ec, RAISED_STACKOVERFLOW | RAISED_NOMEMORY);
         while ((result = vm_exec_handle_exception(ec, state, result, &initial)) == Qundef) {
             /* caught a jump, exec the handler */
             result = vm_exec_core(ec, initial);
