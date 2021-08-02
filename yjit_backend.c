@@ -238,15 +238,15 @@ void ir_print_to_dot(jitstate_t *jit)
 /* Convenience methods for pushing instructions. */
 /*************************************************/
 
-ir_opnd_t ir_add(jitstate_t *jit, ir_opnd_t opnd1, ir_opnd_t opnd2)
+ir_opnd_t ir_add(jitstate_t *jit, ir_opnd_t opnd0, ir_opnd_t opnd1)
 {
-    return push_insn(jit, OP_ADD, opnd1, opnd2);
+    return push_insn(jit, OP_ADD, opnd0, opnd1);
 }
 
-ir_opnd_t ir_mov(jitstate_t *jit, ir_opnd_t opnd1, ir_opnd_t opnd2)
+ir_opnd_t ir_mov(jitstate_t *jit, ir_opnd_t opnd0, ir_opnd_t opnd1)
 {
-    RUBY_ASSERT((opnd1.kind == EIR_INSN_OUT || opnd1.kind == EIR_REG) && "can only mov into a EIR_INSN_OUT or EIR_REG");
-    return push_insn(jit, OP_MOV, opnd1, opnd2);
+    RUBY_ASSERT((opnd0.kind == EIR_INSN_OUT || opnd0.kind == EIR_REG) && "can only mov into a EIR_INSN_OUT or EIR_REG");
+    return push_insn(jit, OP_MOV, opnd0, opnd1);
 }
 
 void ir_ret(jitstate_t *jit)
@@ -254,9 +254,9 @@ void ir_ret(jitstate_t *jit)
     push_insn(jit, OP_RET);
 }
 
-ir_opnd_t ir_sub(jitstate_t *jit, ir_opnd_t opnd1, ir_opnd_t opnd2)
+ir_opnd_t ir_sub(jitstate_t *jit, ir_opnd_t opnd0, ir_opnd_t opnd1)
 {
-    return push_insn(jit, OP_SUB, opnd1, opnd2);
+    return push_insn(jit, OP_SUB, opnd0, opnd1);
 }
 
 /*************************************************/
@@ -280,7 +280,7 @@ x86opnd_t ir_x86opnd(x86opnd_t *allocations, ir_opnd_t opnd)
 
 #define NOT_LIVE_REG -1
 
-// Fetch a free scratch register and mark it as active.
+// Find the index of the next scratch register that can be allocated
 int32_t ir_next_scratch(int32_t active[NUM_SCR_REGS])
 {
     for (int32_t index = 0; index < NUM_SCR_REGS; index++) {
@@ -292,7 +292,7 @@ int32_t ir_next_scratch(int32_t active[NUM_SCR_REGS])
 }
 
 // Allocate a register and mark it as active
-x86opnd_t ir_allocate_register(int32_t *active, x86opnd_t *allocations, int32_t insn_idx, int32_t last_insn_index)
+x86opnd_t ir_alloc_reg(int32_t *active, x86opnd_t *allocations, int32_t insn_idx, int32_t last_insn_index)
 {
     int32_t allocated_index = ir_next_scratch(active);
     x86opnd_t allocated = ir_x86opnd(allocations, SCR_REGS[allocated_index]);
@@ -358,7 +358,7 @@ void ir_gen_x86(codeblock_t *cb, jitstate_t *jit)
                     // then make sure we move the result into the correct
                     // register.
                     if (persists) {
-                        x86opnd_t allocated = ir_allocate_register(active, allocations, insn_idx, last_insn_index);
+                        x86opnd_t allocated = ir_alloc_reg(active, allocations, insn_idx, last_insn_index);
                         mov(cb, allocated, opnd0);
                     }
                 } else if (opnd1.type == OPND_REG) {
@@ -370,7 +370,7 @@ void ir_gen_x86(codeblock_t *cb, jitstate_t *jit)
                     // then make sure we move the result into the correct
                     // register.
                     if (persists) {
-                        x86opnd_t allocated = ir_allocate_register(active, allocations, insn_idx, last_insn_index);
+                        x86opnd_t allocated = ir_alloc_reg(active, allocations, insn_idx, last_insn_index);
                         mov(cb, allocated, opnd1);
                     }
                 } else {
@@ -378,7 +378,7 @@ void ir_gen_x86(codeblock_t *cb, jitstate_t *jit)
                     // a temporary register to accomplish this instruction, so
                     // here we're going to allocate it regardless of whether or
                     // not this instruction result persists.
-                    x86opnd_t allocated = ir_allocate_register(active, allocations, insn_idx, last_insn_index);
+                    x86opnd_t allocated = ir_alloc_reg(active, allocations, insn_idx, last_insn_index);
                     mov(cb, allocated, opnd0);
                     add(cb, allocated, opnd1);
                 }
@@ -469,6 +469,11 @@ void test_backend()
 
     TEST("adding with both immediates", 7, {
         ir_mov(jit, IR_REG(RAX), ir_add(jit, ir_imm(3), ir_imm(4)));
+        ir_ret(jit);
+    })
+
+    TEST("adding with a chain", 10, {
+        ir_mov(jit, IR_REG(RAX), ir_add(jit, ir_add(jit, ir_imm(3), ir_imm(4)), ir_imm(3)));
         ir_ret(jit);
     })
 
