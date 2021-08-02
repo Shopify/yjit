@@ -171,8 +171,11 @@ const char* ir_op_name(int op)
     switch (op)
     {
         case OP_ADD: return "add";
+        case OP_AND: return "and";
         case OP_MOV: return "mov";
+        case OP_NOT: return "not";
         case OP_RET: return "ret";
+        case OP_SUB: return "sub";
 
         default:
             RUBY_ASSERT(false && "unknown opnd type");
@@ -243,10 +246,20 @@ ir_opnd_t ir_add(jitstate_t *jit, ir_opnd_t opnd0, ir_opnd_t opnd1)
     return push_insn(jit, OP_ADD, opnd0, opnd1);
 }
 
-ir_opnd_t ir_mov(jitstate_t *jit, ir_opnd_t opnd0, ir_opnd_t opnd1)
+ir_opnd_t ir_and(jitstate_t *jit, ir_opnd_t opnd0, ir_opnd_t opnd1)
 {
-    RUBY_ASSERT((opnd0.kind == EIR_INSN_OUT || opnd0.kind == EIR_REG) && "can only mov into a EIR_INSN_OUT or EIR_REG");
-    return push_insn(jit, OP_MOV, opnd0, opnd1);
+    return push_insn(jit, OP_AND, opnd0, opnd1);
+}
+
+ir_opnd_t ir_mov(jitstate_t *jit, ir_opnd_t dst, ir_opnd_t src)
+{
+    RUBY_ASSERT((dst.kind == EIR_INSN_OUT || dst.kind == EIR_REG) && "can only mov into a EIR_INSN_OUT or EIR_REG");
+    return push_insn(jit, OP_MOV, dst, src);
+}
+
+ir_opnd_t ir_not(jitstate_t *jit, ir_opnd_t opnd)
+{
+    return push_insn(jit, OP_NOT, opnd);
 }
 
 void ir_ret(jitstate_t *jit)
@@ -303,6 +316,47 @@ x86opnd_t ir_alloc_reg(int32_t *active, x86opnd_t *allocations, int32_t insn_idx
     return allocated;
 }
 
+typedef void (x86_binary_op_t) (codeblock_t*, x86opnd_t, x86opnd_t);
+
+// Write out x86 instruction into the codeblock for a specific binary operation
+void ir_gen_x86_binary(codeblock_t *cb, int32_t *active, x86opnd_t *allocations, ir_insn_t insn, int32_t insn_idx, int32_t last_insn_index, bool persists, x86_binary_op_t *op)
+{
+    x86opnd_t opnd0 = ir_x86opnd(allocations, rb_darray_get(insn.opnds, 0));
+    x86opnd_t opnd1 = ir_x86opnd(allocations, rb_darray_get(insn.opnds, 1));
+
+    if (opnd0.type == OPND_REG) {
+        // If the first operand is already a register, then use that as the
+        // destination for the instruction.
+        op(cb, opnd0, opnd1);
+
+        // If this instruction persists through other instructions, then make
+        // sure we move the result into the correct register.
+        if (persists) {
+            x86opnd_t allocated = ir_alloc_reg(active, allocations, insn_idx, last_insn_index);
+            mov(cb, allocated, opnd0);
+        }
+    } else if (opnd1.type == OPND_REG) {
+        // If the second operand is already a register, then use that as the
+        // destination for the add instruction.
+        op(cb, opnd1, opnd0);
+
+        // If this instruction persists through other instructions, then make
+        // sure we move the result into the correct register.
+        if (persists) {
+            x86opnd_t allocated = ir_alloc_reg(active, allocations, insn_idx, last_insn_index);
+            mov(cb, allocated, opnd1);
+        }
+    } else {
+        // Since we have two operands that aren't registers, we need a temporary
+        // register to accomplish this instruction, so here we're going to
+        // allocate it regardless of whether or not this instruction result
+        // persists.
+        x86opnd_t allocated = ir_alloc_reg(active, allocations, insn_idx, last_insn_index);
+        mov(cb, allocated, opnd0);
+        op(cb, allocated, opnd1);
+    }
+}
+
 // Write out x86 instructions into the codeblock for the given IR instructions
 void ir_gen_x86(codeblock_t *cb, jitstate_t *jit)
 {
@@ -345,45 +399,12 @@ void ir_gen_x86(codeblock_t *cb, jitstate_t *jit)
         bool persists = insn_idx != last_insn_index;
 
         switch (insn.op) {
-            case OP_ADD: {
-                x86opnd_t opnd0 = ir_x86opnd(allocations, rb_darray_get(insn.opnds, 0));
-                x86opnd_t opnd1 = ir_x86opnd(allocations, rb_darray_get(insn.opnds, 1));
-
-                if (opnd0.type == OPND_REG) {
-                    // If the first operand is already a register, then use that
-                    // as the destination for the add instruction.
-                    add(cb, opnd0, opnd1);
-
-                    // If this instruction persists through other instructions,
-                    // then make sure we move the result into the correct
-                    // register.
-                    if (persists) {
-                        x86opnd_t allocated = ir_alloc_reg(active, allocations, insn_idx, last_insn_index);
-                        mov(cb, allocated, opnd0);
-                    }
-                } else if (opnd1.type == OPND_REG) {
-                    // If the second operand is already a register, then use
-                    // that as the destination for the add instruction.
-                    add(cb, opnd1, opnd0);
-
-                    // If this instruction persists through other instructions,
-                    // then make sure we move the result into the correct
-                    // register.
-                    if (persists) {
-                        x86opnd_t allocated = ir_alloc_reg(active, allocations, insn_idx, last_insn_index);
-                        mov(cb, allocated, opnd1);
-                    }
-                } else {
-                    // Since we have two operands that aren't registers, we need
-                    // a temporary register to accomplish this instruction, so
-                    // here we're going to allocate it regardless of whether or
-                    // not this instruction result persists.
-                    x86opnd_t allocated = ir_alloc_reg(active, allocations, insn_idx, last_insn_index);
-                    mov(cb, allocated, opnd0);
-                    add(cb, allocated, opnd1);
-                }
+            case OP_ADD:
+                ir_gen_x86_binary(cb, active, allocations, insn, insn_idx, last_insn_index, persists, add);
                 break;
-            }
+            case OP_AND:
+                ir_gen_x86_binary(cb, active, allocations, insn, insn_idx, last_insn_index, persists, and);
+                break;
             case OP_MOV: {
                 // We're assuming here that opnd0 is a register that we can mov
                 // opnd1 into.
@@ -401,8 +422,32 @@ void ir_gen_x86(codeblock_t *cb, jitstate_t *jit)
                 mov(cb, opnd0, opnd1);
                 break;
             }
+            case OP_NOT: {
+                x86opnd_t opnd = ir_x86opnd(allocations, rb_darray_get(insn.opnds, 0));
+
+                if (opnd.type == OPND_REG) {
+                    not(cb, opnd);
+
+                    // If this instruction persists through other instructions,
+                    // then mark down the allocation for this instruction as the
+                    // opnd0 since we know it's already a register.
+                    if (persists)
+                        allocations[insn_idx] = opnd;
+                } else {
+                    // Otherwise, allocate a register since this value is not
+                    // already in a register, then perform the operation and
+                    // keep the result.
+                    x86opnd_t allocated = ir_alloc_reg(active, allocations, insn_idx, last_insn_index);
+                    mov(cb, allocated, opnd);
+                    not(cb, allocated);
+                }
+                break;
+            }
             case OP_RET:
                 ret(cb);
+                break;
+            case OP_SUB:
+                ir_gen_x86_binary(cb, active, allocations, insn, insn_idx, last_insn_index, persists, sub);
                 break;
             default:
                 RUBY_ASSERT(false && "unsupported insn op");
@@ -474,6 +519,21 @@ void test_backend()
 
     TEST("adding with a chain", 10, {
         ir_mov(jit, IR_REG(RAX), ir_add(jit, ir_add(jit, ir_imm(3), ir_imm(4)), ir_imm(3)));
+        ir_ret(jit);
+    })
+
+    TEST("adding and subtracting with a chain", 5, {
+        ir_mov(jit, IR_REG(RAX), ir_sub(jit, ir_add(jit, ir_imm(3), ir_imm(4)), ir_imm(2)));
+        ir_ret(jit);
+    })
+
+    TEST("and", 5, {
+        ir_mov(jit, IR_REG(RAX), ir_and(jit, ir_imm(13), ir_imm(7)));
+        ir_ret(jit);
+    })
+
+    TEST("not", -16, {
+        ir_mov(jit, IR_REG(RAX), ir_not(jit, ir_imm(15)));
         ir_ret(jit);
     })
 
