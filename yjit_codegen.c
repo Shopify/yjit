@@ -551,11 +551,11 @@ static codegen_status_t
 gen_dup(jitstate_t* jit, ctx_t* ctx)
 {
     // Get the top value and its type
-    val_type_t dup_type = ctx_get_opnd_type(ctx, OPND_STACK(0));
     x86opnd_t dup_val = ctx_stack_pop(ctx, 0);
+    temp_type_mapping_t mapping = ctx_get_opnd_mapping(ctx, OPND_STACK(0));
 
     // Push the same value on top
-    x86opnd_t loc0 = ctx_stack_push(ctx, dup_type);
+    x86opnd_t loc0 = ctx_stack_push_mapping(ctx, mapping);
     mov(cb, REG0, dup_val);
     mov(cb, loc0, REG0);
 
@@ -573,17 +573,16 @@ gen_dupn(jitstate_t* jit, ctx_t* ctx)
         return YJIT_CANT_COMPILE;
     }
 
-    val_type_t type1 = ctx_get_opnd_type(ctx, OPND_STACK(1));
     x86opnd_t opnd1 = ctx_stack_opnd(ctx, 1);
-
-    val_type_t type0 = ctx_get_opnd_type(ctx, OPND_STACK(0));
     x86opnd_t opnd0 = ctx_stack_opnd(ctx, 0);
+    temp_type_mapping_t mapping1 = ctx_get_opnd_mapping(ctx, OPND_STACK(1));
+    temp_type_mapping_t mapping0 = ctx_get_opnd_mapping(ctx, OPND_STACK(0));
 
-    x86opnd_t dst1 = ctx_stack_push(ctx, type1);
+    x86opnd_t dst1 = ctx_stack_push_mapping(ctx, mapping1);
     mov(cb, REG0, opnd1);
     mov(cb, dst1, REG0);
 
-    x86opnd_t dst0 = ctx_stack_push(ctx, type0);
+    x86opnd_t dst0 = ctx_stack_push_mapping(ctx, mapping0);
     mov(cb, REG0, opnd0);
     mov(cb, dst0, REG0);
 
@@ -594,20 +593,18 @@ gen_dupn(jitstate_t* jit, ctx_t* ctx)
 static codegen_status_t
 gen_swap(jitstate_t* jit, ctx_t* ctx)
 {
-    val_type_t type0 = ctx_get_opnd_type(ctx, OPND_STACK(0));
     x86opnd_t opnd0 = ctx_stack_opnd(ctx, 0);
-
-    val_type_t type1 = ctx_get_opnd_type(ctx, OPND_STACK(1));
     x86opnd_t opnd1 = ctx_stack_opnd(ctx, 1);
+    temp_type_mapping_t mapping0 = ctx_get_opnd_mapping(ctx, OPND_STACK(0));
+    temp_type_mapping_t mapping1 = ctx_get_opnd_mapping(ctx, OPND_STACK(1));
 
     mov(cb, REG0, opnd0);
     mov(cb, REG1, opnd1);
-
-    ctx_set_opnd_type(ctx, OPND_STACK(0), type1);
-    ctx_set_opnd_type(ctx, OPND_STACK(1), type0);
-
     mov(cb, opnd0, REG1);
     mov(cb, opnd1, REG0);
+
+    ctx_set_opnd_mapping(ctx, OPND_STACK(0), mapping1);
+    ctx_set_opnd_mapping(ctx, OPND_STACK(1), mapping0);
 
     return YJIT_KEEP_COMPILING;
 }
@@ -618,15 +615,14 @@ gen_setn(jitstate_t* jit, ctx_t* ctx)
 {
     rb_num_t n = (rb_num_t)jit_get_arg(jit, 0);
 
-    // Get the top value and its type
-    val_type_t top_type = ctx_get_opnd_type(ctx, OPND_STACK(0));
+    // Set the destination
     x86opnd_t top_val = ctx_stack_pop(ctx, 0);
-
-    // Set the destination and its type
-    ctx_set_opnd_type(ctx, OPND_STACK(n), top_type);
     x86opnd_t dst_opnd = ctx_stack_opnd(ctx, (int32_t)n);
     mov(cb, REG0, top_val);
     mov(cb, dst_opnd, REG0);
+
+    temp_type_mapping_t mapping = ctx_get_opnd_mapping(ctx, OPND_STACK(0));
+    ctx_set_opnd_mapping(ctx, OPND_STACK(n), mapping);
 
     return YJIT_KEEP_COMPILING;
 }
@@ -638,10 +634,10 @@ gen_topn(jitstate_t* jit, ctx_t* ctx)
     int32_t n = (int32_t)jit_get_arg(jit, 0);
 
     // Get top n type / operand
-    val_type_t top_n_type = ctx_get_opnd_type(ctx, OPND_STACK(n));
     x86opnd_t top_n_val = ctx_stack_opnd(ctx, n);
+    temp_type_mapping_t mapping = ctx_get_opnd_mapping(ctx, OPND_STACK(n));
 
-    x86opnd_t loc0 = ctx_stack_push(ctx, top_n_type);
+    x86opnd_t loc0 = ctx_stack_push_mapping(ctx, mapping);
     mov(cb, REG0, top_n_val);
     mov(cb, loc0, REG0);
 
@@ -1235,7 +1231,7 @@ gen_set_ivar(jitstate_t *jit, ctx_t *ctx, const int max_chain_depth, VALUE compt
             ADD_COMMENT(cb, "guard value is immediate");
             test(cb, REG1, imm_opnd(RUBY_IMMEDIATE_MASK));
             jz_ptr(cb, COUNTED_EXIT(side_exit, setivar_val_heapobject));
-            ctx_set_opnd_type(ctx, OPND_STACK(0), TYPE_IMM);
+            ctx_upgrade_opnd_type(ctx, OPND_STACK(0), TYPE_IMM);
         }
 
         // Pop the value to write
@@ -1665,6 +1661,26 @@ guard_two_fixnums(ctx_t* ctx, uint8_t* side_exit)
     val_type_t arg1_type = ctx_get_opnd_type(ctx, OPND_STACK(0));
     val_type_t arg0_type = ctx_get_opnd_type(ctx, OPND_STACK(1));
 
+    if (arg0_type.is_heap || arg1_type.is_heap) {
+        jmp_ptr(cb, side_exit);
+        return;
+    }
+
+    if (arg0_type.type != ETYPE_FIXNUM && arg0_type.type != ETYPE_UNKNOWN) {
+        jmp_ptr(cb, side_exit);
+        return;
+    }
+
+    if (arg1_type.type != ETYPE_FIXNUM && arg1_type.type != ETYPE_UNKNOWN) {
+        jmp_ptr(cb, side_exit);
+        return;
+    }
+
+    RUBY_ASSERT(!arg0_type.is_heap);
+    RUBY_ASSERT(!arg1_type.is_heap);
+    RUBY_ASSERT(arg0_type.type == ETYPE_FIXNUM || arg0_type.type == ETYPE_UNKNOWN);
+    RUBY_ASSERT(arg1_type.type == ETYPE_FIXNUM || arg1_type.type == ETYPE_UNKNOWN);
+
     // Get stack operands without popping them
     x86opnd_t arg1 = ctx_stack_opnd(ctx, 0);
     x86opnd_t arg0 = ctx_stack_opnd(ctx, 1);
@@ -1682,8 +1698,8 @@ guard_two_fixnums(ctx_t* ctx, uint8_t* side_exit)
     }
 
     // Set stack types in context
-    ctx_set_opnd_type(ctx, OPND_STACK(0), TYPE_FIXNUM);
-    ctx_set_opnd_type(ctx, OPND_STACK(1), TYPE_FIXNUM);
+    ctx_upgrade_opnd_type(ctx, OPND_STACK(0), TYPE_FIXNUM);
+    ctx_upgrade_opnd_type(ctx, OPND_STACK(1), TYPE_FIXNUM);
 }
 
 // Conditional move operation used by comparison operators
@@ -2419,7 +2435,7 @@ jit_guard_known_klass(jitstate_t *jit, ctx_t *ctx, VALUE known_klass, insn_opnd_
             cmp(cb, REG0, imm_opnd(Qnil));
             jit_chain_guard(JCC_JNE, jit, ctx, max_chain_depth, side_exit);
 
-            ctx_set_opnd_type(ctx, insn_opnd, TYPE_NIL);
+            ctx_upgrade_opnd_type(ctx, insn_opnd, TYPE_NIL);
         }
     }
     else if (known_klass == rb_cTrueClass) {
@@ -2431,7 +2447,7 @@ jit_guard_known_klass(jitstate_t *jit, ctx_t *ctx, VALUE known_klass, insn_opnd_
             cmp(cb, REG0, imm_opnd(Qtrue));
             jit_chain_guard(JCC_JNE, jit, ctx, max_chain_depth, side_exit);
 
-            ctx_set_opnd_type(ctx, insn_opnd, TYPE_TRUE);
+            ctx_upgrade_opnd_type(ctx, insn_opnd, TYPE_TRUE);
         }
     }
     else if (known_klass == rb_cFalseClass) {
@@ -2444,7 +2460,7 @@ jit_guard_known_klass(jitstate_t *jit, ctx_t *ctx, VALUE known_klass, insn_opnd_
             test(cb, REG0, REG0);
             jit_chain_guard(JCC_JNZ, jit, ctx, max_chain_depth, side_exit);
 
-            ctx_set_opnd_type(ctx, insn_opnd, TYPE_FALSE);
+            ctx_upgrade_opnd_type(ctx, insn_opnd, TYPE_FALSE);
         }
     }
     else if (known_klass == rb_cInteger && FIXNUM_P(sample_instance)) {
@@ -2457,7 +2473,7 @@ jit_guard_known_klass(jitstate_t *jit, ctx_t *ctx, VALUE known_klass, insn_opnd_
             ADD_COMMENT(cb, "guard object is fixnum");
             test(cb, REG0, imm_opnd(RUBY_FIXNUM_FLAG));
             jit_chain_guard(JCC_JZ, jit, ctx, max_chain_depth, side_exit);
-            ctx_set_opnd_type(ctx, insn_opnd, TYPE_FIXNUM);
+            ctx_upgrade_opnd_type(ctx, insn_opnd, TYPE_FIXNUM);
         }
     }
     else if (known_klass == rb_cSymbol && STATIC_SYM_P(sample_instance)) {
@@ -2471,7 +2487,7 @@ jit_guard_known_klass(jitstate_t *jit, ctx_t *ctx, VALUE known_klass, insn_opnd_
             STATIC_ASSERT(special_shift_is_8, RUBY_SPECIAL_SHIFT == 8);
             cmp(cb, REG0_8, imm_opnd(RUBY_SYMBOL_FLAG));
             jit_chain_guard(JCC_JNE, jit, ctx, max_chain_depth, side_exit);
-            ctx_set_opnd_type(ctx, insn_opnd, TYPE_STATIC_SYMBOL);
+            ctx_upgrade_opnd_type(ctx, insn_opnd, TYPE_STATIC_SYMBOL);
         }
     }
     else if (known_klass == rb_cFloat && FLONUM_P(sample_instance)) {
@@ -2485,7 +2501,7 @@ jit_guard_known_klass(jitstate_t *jit, ctx_t *ctx, VALUE known_klass, insn_opnd_
             and(cb, REG1, imm_opnd(RUBY_FLONUM_MASK));
             cmp(cb, REG1, imm_opnd(RUBY_FLONUM_FLAG));
             jit_chain_guard(JCC_JNE, jit, ctx, max_chain_depth, side_exit);
-            ctx_set_opnd_type(ctx, insn_opnd, TYPE_FLONUM);
+            ctx_upgrade_opnd_type(ctx, insn_opnd, TYPE_FLONUM);
         }
     }
     else if (FL_TEST(known_klass, FL_SINGLETON) && sample_instance == rb_attr_get(known_klass, id__attached__)) {
@@ -2518,7 +2534,7 @@ jit_guard_known_klass(jitstate_t *jit, ctx_t *ctx, VALUE known_klass, insn_opnd_
             cmp(cb, REG0, imm_opnd(Qnil));
             jit_chain_guard(JCC_JBE, jit, ctx, max_chain_depth, side_exit);
 
-            ctx_set_opnd_type(ctx, insn_opnd, TYPE_HEAP);
+            ctx_upgrade_opnd_type(ctx, insn_opnd, TYPE_HEAP);
         }
 
         x86opnd_t klass_opnd = mem_opnd(64, REG0, offsetof(struct RBasic, klass));
@@ -3063,7 +3079,7 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
         ctx_set_local_type(&callee_ctx, arg_idx, arg_type);
     }
     val_type_t recv_type = ctx_get_opnd_type(ctx, OPND_STACK(argc));
-    ctx_set_opnd_type(&callee_ctx, OPND_SELF, recv_type);
+    ctx_upgrade_opnd_type(&callee_ctx, OPND_SELF, recv_type);
 
     // The callee might change locals through Kernel#binding and other means.
     ctx_clear_local_types(ctx);
