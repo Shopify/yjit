@@ -213,97 +213,13 @@ void ir_print_insns(jitstate_t *jit)
     }
 }
 
-/*************************************************/
-/* Convenience methods for pushing instructions. */
-/*************************************************/
-
-ir_opnd_t ir_add(jitstate_t *jit, ir_opnd_t dest, ir_opnd_t src)
-{
-    return push_insn(jit, OP_ADD, dest, src);
-}
-
-ir_opnd_t ir_mov(jitstate_t *jit, ir_opnd_t dest, ir_opnd_t src)
-{
-    return push_insn(jit, OP_MOV, dest, src);
-}
-
-void ir_ret(jitstate_t *jit)
-{
-    push_insn(jit, OP_RET);
-}
-
-/*************************************************/
-/* Generate x86 code from the IR.                */
-/*************************************************/
-
-x86opnd_t ir_x86_opnd(insn_array_t insns, ir_opnd_t opnd)
-{
-    switch (opnd.kind)
-    {
-        case EIR_REG:
-            return (x86opnd_t){ OPND_REG, 64, .as.reg = { REG_GP, opnd.as.reg.idx } };
-        case EIR_IMM:
-            return (x86opnd_t){ OPND_IMM, opnd.num_bits, .as.imm = opnd.as.imm };
-        case EIR_INSN_OUT: {
-            // Temporary cheating way of handling register allocation that will
-            // only work for certain instructions.
-            ir_insn_t insn = rb_darray_get(insns, opnd.as.idx);
-            return ir_x86_opnd(insns, rb_darray_get(insn.opnds, 0));
-        }
-        default:
-            RUBY_ASSERT(false && "unknown opnd kind");
-    }
-}
-
-// Fetch a free scratch register and mark it as active.
-int32_t ir_next_scratch(bool active[NUM_SCR_REGS])
-{
-    for (int32_t index = 0; index < NUM_SCR_REGS; index++) {
-        if (!active[index]) {
-            return index;
-        }
-    }
-    RUBY_ASSERT(false && "out of free registers");
-}
-
-// Write out x86 instructions into the codeblock for the given IR instructions
-void ir_x86_insns(codeblock_t *cb, insn_array_t insns)
-{
-    // Initialize a list of booleans that corresponds to whether or not the
-    // register at that given index is currently active.
-    // bool active[NUM_SCR_REGS];
-    // for (int32_t index = 0; index < NUM_SCR_REGS; index++)
-    //     active[index] = false;
-
-    cb_set_pos(cb, 0);
-
-    rb_darray_for(insns, insn_idx)
-    {
-        ir_insn_t insn = rb_darray_get(insns, insn_idx);
-
-        switch (insn.op) {
-            case OP_ADD:
-                add(cb, ir_x86_opnd(insns, rb_darray_get(insn.opnds, 0)), ir_x86_opnd(insns, rb_darray_get(insn.opnds, 1)));
-                break;
-            case OP_MOV:
-                mov(cb, ir_x86_opnd(insns, rb_darray_get(insn.opnds, 0)), ir_x86_opnd(insns, rb_darray_get(insn.opnds, 1)));
-                break;
-            case OP_RET:
-                ret(cb);
-                break;
-            default:
-                RUBY_ASSERT(false && "unsupported insn op");
-        }
-    }
-}
-
-void ir_print_to_dot(insn_array_t insns)
+void ir_print_to_dot(jitstate_t *jit)
 {
     printf("digraph {\n");
 
-    rb_darray_for(insns, insn_idx)
+    rb_darray_for(jit->insns, insn_idx)
     {
-        ir_insn_t insn = rb_darray_get(insns, insn_idx);
+        ir_insn_t insn = rb_darray_get(jit->insns, insn_idx);
         printf("  %d [label=\"[%d] %s\"];\n", insn_idx, insn_idx, ir_op_name(insn.op));
 
         rb_darray_for(insn.opnds, opnd_idx)
@@ -316,6 +232,184 @@ void ir_print_to_dot(insn_array_t insns)
     }
 
     printf("}\n");
+}
+
+/*************************************************/
+/* Convenience methods for pushing instructions. */
+/*************************************************/
+
+ir_opnd_t ir_add(jitstate_t *jit, ir_opnd_t opnd0, ir_opnd_t opnd1)
+{
+    return push_insn(jit, OP_ADD, opnd0, opnd1);
+}
+
+ir_opnd_t ir_mov(jitstate_t *jit, ir_opnd_t opnd0, ir_opnd_t opnd1)
+{
+    RUBY_ASSERT((opnd0.kind == EIR_INSN_OUT || opnd0.kind == EIR_REG) && "can only mov into a EIR_INSN_OUT or EIR_REG");
+    return push_insn(jit, OP_MOV, opnd0, opnd1);
+}
+
+void ir_ret(jitstate_t *jit)
+{
+    push_insn(jit, OP_RET);
+}
+
+ir_opnd_t ir_sub(jitstate_t *jit, ir_opnd_t opnd0, ir_opnd_t opnd1)
+{
+    return push_insn(jit, OP_SUB, opnd0, opnd1);
+}
+
+/*************************************************/
+/* Generate x86 code from the IR.                */
+/*************************************************/
+
+x86opnd_t ir_x86opnd(x86opnd_t *allocations, ir_opnd_t opnd)
+{
+    switch (opnd.kind)
+    {
+        case EIR_REG:
+            return (x86opnd_t){ OPND_REG, 64, .as.reg = { REG_GP, opnd.as.reg.idx } };
+        case EIR_IMM:
+            return (x86opnd_t){ OPND_IMM, opnd.num_bits, .as.imm = opnd.as.imm };
+        case EIR_INSN_OUT:
+            return allocations[opnd.as.idx];
+        default:
+            RUBY_ASSERT(false && "unknown opnd kind");
+    }
+}
+
+#define NOT_LIVE_REG -1
+
+// Find the index of the next scratch register that can be allocated
+int32_t ir_next_scratch(int32_t active[NUM_SCR_REGS])
+{
+    for (int32_t index = 0; index < NUM_SCR_REGS; index++) {
+        if (active[index] == NOT_LIVE_REG) {
+            return index;
+        }
+    }
+    RUBY_ASSERT(false && "out of free registers");
+}
+
+// Allocate a register and mark it as active
+x86opnd_t ir_alloc_reg(int32_t *active, x86opnd_t *allocations, int32_t insn_idx, int32_t last_insn_index)
+{
+    int32_t allocated_index = ir_next_scratch(active);
+    x86opnd_t allocated = ir_x86opnd(allocations, SCR_REGS[allocated_index]);
+
+    allocations[insn_idx] = allocated;
+    active[allocated_index] = last_insn_index;
+
+    return allocated;
+}
+
+// Write out x86 instructions into the codeblock for the given IR instructions
+void ir_gen_x86(codeblock_t *cb, jitstate_t *jit)
+{
+    // Initialize a list of integers that corresponds to whether or not the
+    // register at that given index is currently active. If it's not the value
+    // of NOT_LIVE_REG then it is the instruction index where it will stop being
+    // live.
+    int32_t active[NUM_SCR_REGS];
+    for (int32_t index = 0; index < NUM_SCR_REGS; index++)
+        active[index] = NOT_LIVE_REG;
+
+    // This is an array of register allocations for the return variable of each
+    // instruction so that they can be referenced later by EIR_INSN_OUT
+    // operands.
+    int32_t insns_size = rb_darray_size(jit->insns);
+    x86opnd_t *allocations = calloc(insns_size, sizeof(x86opnd_t));
+
+    cb_set_pos(cb, 0);
+
+    rb_darray_for(jit->insns, insn_idx)
+    {
+        // Free the allocated registers back to the not live list if we're past
+        // the point where they're last used.
+        for (int index = 0; index < NUM_SCR_REGS; index++) {
+            if (active[index] != NOT_LIVE_REG && active[index] < insn_idx)
+                active[index] = NOT_LIVE_REG;
+        }
+
+        ir_insn_t insn = rb_darray_get(jit->insns, insn_idx);
+        int32_t last_insn_index = rb_darray_get(jit->live_ranges, insn_idx);
+
+        // You can use the result of this instruction as an operand on a
+        // subsequent instruction. When you do, the value of insn_idx (the index
+        // of this instruction in the sequence) and the value of last_insn_index
+        // (the last index in the sequence where the result of the instruction
+        // is used as an operand) will not be the same. In that case we say that
+        // this instruction "persists" in that we should ensure we have
+        // allocated any necessary registers and made sure the value is staying
+        // in the place we expect it to.
+        bool persists = insn_idx != last_insn_index;
+
+        switch (insn.op) {
+            case OP_ADD: {
+                x86opnd_t opnd0 = ir_x86opnd(allocations, rb_darray_get(insn.opnds, 0));
+                x86opnd_t opnd1 = ir_x86opnd(allocations, rb_darray_get(insn.opnds, 1));
+
+                if (opnd0.type == OPND_REG) {
+                    // If the first operand is already a register, then use that
+                    // as the destination for the add instruction.
+                    add(cb, opnd0, opnd1);
+
+                    // If this instruction persists through other instructions,
+                    // then make sure we move the result into the correct
+                    // register.
+                    if (persists) {
+                        x86opnd_t allocated = ir_alloc_reg(active, allocations, insn_idx, last_insn_index);
+                        mov(cb, allocated, opnd0);
+                    }
+                } else if (opnd1.type == OPND_REG) {
+                    // If the second operand is already a register, then use
+                    // that as the destination for the add instruction.
+                    add(cb, opnd1, opnd0);
+
+                    // If this instruction persists through other instructions,
+                    // then make sure we move the result into the correct
+                    // register.
+                    if (persists) {
+                        x86opnd_t allocated = ir_alloc_reg(active, allocations, insn_idx, last_insn_index);
+                        mov(cb, allocated, opnd1);
+                    }
+                } else {
+                    // Since we have two operands that aren't registers, we need
+                    // a temporary register to accomplish this instruction, so
+                    // here we're going to allocate it regardless of whether or
+                    // not this instruction result persists.
+                    x86opnd_t allocated = ir_alloc_reg(active, allocations, insn_idx, last_insn_index);
+                    mov(cb, allocated, opnd0);
+                    add(cb, allocated, opnd1);
+                }
+                break;
+            }
+            case OP_MOV: {
+                // We're assuming here that opnd0 is a register that we can mov
+                // opnd1 into.
+                x86opnd_t opnd0 = ir_x86opnd(allocations, rb_darray_get(insn.opnds, 0));
+                x86opnd_t opnd1 = ir_x86opnd(allocations, rb_darray_get(insn.opnds, 1));
+
+                // If this instruction result persists beyond this instruction,
+                // it's going to need to know the allocation. We don't actually
+                // need to allocate anything since we know we're already moving
+                // a value into a register, so here we're just going to mark the
+                // allocation as whatever is living in the first operand.
+                if (persists)
+                    allocations[insn_idx] = opnd0;
+
+                mov(cb, opnd0, opnd1);
+                break;
+            }
+            case OP_RET:
+                ret(cb);
+                break;
+            default:
+                RUBY_ASSERT(false && "unsupported insn op");
+        }
+    }
+
+    free(allocations);
 }
 
 /*************************************************/
@@ -346,7 +440,7 @@ void test_backend()
     #define TEST(NAME, EXPECTED, BODY) \
         jitstate = (jitstate_t){ 0 }; \
         BODY \
-        ir_x86_insns(cb, jit->insns); \
+        ir_gen_x86(cb, jit); \
         expected = EXPECTED; \
         actual = function(); \
         if (expected != actual) { \
@@ -364,6 +458,22 @@ void test_backend()
     TEST("adding with a register and an immediate", 7, {
         ir_opnd_t opnd0 = ir_mov(jit, IR_REG(RAX), ir_imm(3));
         ir_mov(jit, IR_REG(RAX), ir_add(jit, opnd0, ir_imm(4)));
+        ir_ret(jit);
+    })
+
+    TEST("adding with an immediate and a register", 7, {
+        ir_opnd_t opnd1 = ir_mov(jit, IR_REG(RAX), ir_imm(3));
+        ir_mov(jit, IR_REG(RAX), ir_add(jit, ir_imm(4), opnd1));
+        ir_ret(jit);
+    })
+
+    TEST("adding with both immediates", 7, {
+        ir_mov(jit, IR_REG(RAX), ir_add(jit, ir_imm(3), ir_imm(4)));
+        ir_ret(jit);
+    })
+
+    TEST("adding with a chain", 10, {
+        ir_mov(jit, IR_REG(RAX), ir_add(jit, ir_add(jit, ir_imm(3), ir_imm(4)), ir_imm(3)));
         ir_ret(jit);
     })
 
