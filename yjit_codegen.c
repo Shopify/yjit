@@ -235,18 +235,22 @@ yjit_comment_array_t yjit_code_comments;
 static void
 yjit_save_regs(codeblock_t* cb)
 {
+#ifndef YJIT_CALLEE_SAVED
     push(cb, REG_CFP);
     push(cb, REG_EC);
     push(cb, REG_SP);
+#endif
 }
 
 // Restore YJIT registers after a C call
 static void
 yjit_load_regs(codeblock_t* cb)
 {
+#ifndef YJIT_CALLEE_SAVED
     pop(cb, REG_SP);
     pop(cb, REG_EC);
     pop(cb, REG_CFP);
+#endif
 }
 
 // Generate an exit to return to the interpreter
@@ -284,7 +288,6 @@ yjit_gen_exit(jitstate_t *jit, ctx_t *ctx, codeblock_t *cb)
 
 #ifdef YJIT_CALLEE_SAVED
     pop(cb, REG_SP);
-    pop(cb, REG_SP);
     pop(cb, REG_EC);
     pop(cb, REG_CFP);
 #endif
@@ -314,7 +317,6 @@ yjit_gen_leave_exit(codeblock_t *cb)
     mov(cb, REG_SP, member_opnd(REG_CFP, rb_control_frame_t, sp));
 
 #ifdef YJIT_CALLEE_SAVED
-    pop(cb, REG_SP);
     pop(cb, REG_SP);
     pop(cb, REG_EC);
     pop(cb, REG_CFP);
@@ -355,7 +357,6 @@ yjit_pc_guard(const rb_iseq_t *iseq)
 
 #ifdef YJIT_CALLEE_SAVED
     pop(cb, REG_SP);
-    pop(cb, REG_SP);
     pop(cb, REG_EC);
     pop(cb, REG_CFP);
 #endif
@@ -390,7 +391,6 @@ yjit_entry_prologue(const rb_iseq_t *iseq)
 #ifdef YJIT_CALLEE_SAVED
     push(cb, REG_CFP);
     push(cb, REG_EC);
-    push(cb, REG_SP);
     push(cb, REG_SP);
 
     // We are passed EC and CFP
