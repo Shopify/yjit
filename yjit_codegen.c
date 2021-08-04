@@ -282,10 +282,12 @@ yjit_gen_exit(jitstate_t *jit, ctx_t *ctx, codeblock_t *cb)
     }
 #endif
 
+#ifdef YJIT_CALLEE_SAVED
     pop(cb, REG_SP);
     pop(cb, REG_SP);
     pop(cb, REG_EC);
     pop(cb, REG_CFP);
+#endif
 
     mov(cb, RAX, imm_opnd(Qundef));
     ret(cb);
@@ -311,10 +313,12 @@ yjit_gen_leave_exit(codeblock_t *cb)
     sub(cb, member_opnd(REG_CFP, rb_control_frame_t, sp), imm_opnd(SIZEOF_VALUE));
     mov(cb, REG_SP, member_opnd(REG_CFP, rb_control_frame_t, sp));
 
+#ifdef YJIT_CALLEE_SAVED
     pop(cb, REG_SP);
     pop(cb, REG_SP);
     pop(cb, REG_EC);
     pop(cb, REG_CFP);
+#endif
 
     ret(cb);
 
@@ -349,10 +353,12 @@ yjit_pc_guard(const rb_iseq_t *iseq)
     // We're not starting at the first PC, so we need to exit.
     GEN_COUNTER_INC(cb, leave_start_pc_non_zero);
 
+#ifdef YJIT_CALLEE_SAVED
     pop(cb, REG_SP);
     pop(cb, REG_SP);
     pop(cb, REG_EC);
     pop(cb, REG_CFP);
+#endif
 
     mov(cb, RAX, imm_opnd(Qundef));
     ret(cb);
@@ -381,6 +387,7 @@ yjit_entry_prologue(const rb_iseq_t *iseq)
     uint8_t *code_ptr = cb_get_ptr(cb, cb->write_pos);
     ADD_COMMENT(cb, "yjit prolog");
 
+#ifdef YJIT_CALLEE_SAVED
     push(cb, REG_CFP);
     push(cb, REG_EC);
     push(cb, REG_SP);
@@ -389,6 +396,7 @@ yjit_entry_prologue(const rb_iseq_t *iseq)
     // We are passed EC and CFP
     mov(cb, REG_EC, C_ARG_REGS[0]);
     mov(cb, REG_CFP, C_ARG_REGS[1]);
+#endif
 
     // Load the current SP from the CFP into REG_SP
     mov(cb, REG_SP, member_opnd(REG_CFP, rb_control_frame_t, sp));
