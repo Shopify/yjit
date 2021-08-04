@@ -282,6 +282,11 @@ yjit_gen_exit(jitstate_t *jit, ctx_t *ctx, codeblock_t *cb)
     }
 #endif
 
+    pop(cb, REG_SP);
+    pop(cb, REG_SP);
+    pop(cb, REG_EC);
+    pop(cb, REG_CFP);
+
     mov(cb, RAX, imm_opnd(Qundef));
     ret(cb);
 
@@ -305,6 +310,11 @@ yjit_gen_leave_exit(codeblock_t *cb)
     mov(cb, RAX, mem_opnd(64, REG_SP, -SIZEOF_VALUE));
     sub(cb, member_opnd(REG_CFP, rb_control_frame_t, sp), imm_opnd(SIZEOF_VALUE));
     mov(cb, REG_SP, member_opnd(REG_CFP, rb_control_frame_t, sp));
+
+    pop(cb, REG_SP);
+    pop(cb, REG_SP);
+    pop(cb, REG_EC);
+    pop(cb, REG_CFP);
 
     ret(cb);
 
@@ -338,6 +348,12 @@ yjit_pc_guard(const rb_iseq_t *iseq)
 
     // We're not starting at the first PC, so we need to exit.
     GEN_COUNTER_INC(cb, leave_start_pc_non_zero);
+
+    pop(cb, REG_SP);
+    pop(cb, REG_SP);
+    pop(cb, REG_EC);
+    pop(cb, REG_CFP);
+
     mov(cb, RAX, imm_opnd(Qundef));
     ret(cb);
 
@@ -364,6 +380,11 @@ yjit_entry_prologue(const rb_iseq_t *iseq)
 
     uint8_t *code_ptr = cb_get_ptr(cb, cb->write_pos);
     ADD_COMMENT(cb, "yjit prolog");
+
+    push(cb, REG_CFP);
+    push(cb, REG_EC);
+    push(cb, REG_SP);
+    push(cb, REG_SP);
 
     // Load the current SP from the CFP into REG_SP
     mov(cb, REG_SP, member_opnd(REG_CFP, rb_control_frame_t, sp));
