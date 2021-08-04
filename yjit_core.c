@@ -34,6 +34,8 @@ ctx_stack_push_mapping(ctx_t* ctx, temp_type_mapping_t mapping)
         ctx->temp_types[ctx->stack_size] = mapping.type;
 
         RUBY_ASSERT(mapping.mapping.kind != TEMP_LOCAL || mapping.mapping.idx < MAX_LOCAL_TYPES);
+        RUBY_ASSERT(mapping.mapping.kind != TEMP_STACK || mapping.mapping.idx == 0);
+        RUBY_ASSERT(mapping.mapping.kind != TEMP_SELF || mapping.mapping.idx == 0);
     }
 
     ctx->stack_size += 1;
@@ -156,7 +158,6 @@ ctx_get_opnd_type(const ctx_t* ctx, insn_opnd_t opnd)
     rb_bug("unreachable");
 }
 
-int type_diff(val_type_t src, val_type_t dst);
 #define UPGRADE_TYPE(dest, src) do { \
     RUBY_ASSERT(type_diff((src), (dest)) != INT_MAX); \
     (dest) = (src); \
@@ -282,6 +283,81 @@ void ctx_clear_local_types(ctx_t* ctx)
         RUBY_ASSERT(mapping->kind == TEMP_STACK || mapping->kind == TEMP_SELF);
     }
     memset(&ctx->local_types, 0, sizeof(ctx->local_types));
+}
+
+
+/* This returns an appropriate val_type_t based on a known value */
+val_type_t
+yjit_type_of_value(VALUE val)
+{
+    if (SPECIAL_CONST_P(val)) {
+        if (FIXNUM_P(val)) {
+            return TYPE_FIXNUM;
+        } else if (NIL_P(val)) {
+            return TYPE_NIL;
+        } else if (val == Qtrue) {
+            return TYPE_TRUE;
+        } else if (val == Qfalse) {
+            return TYPE_FALSE;
+        } else if (STATIC_SYM_P(val)) {
+            return TYPE_STATIC_SYMBOL;
+        } else if (FLONUM_P(val)) {
+            return TYPE_FLONUM;
+        } else {
+            RUBY_ASSERT(false);
+            UNREACHABLE_RETURN(TYPE_IMM);
+        }
+    } else {
+        switch (BUILTIN_TYPE(val)) {
+            case T_ARRAY:
+               return TYPE_ARRAY;
+            case T_HASH:
+               return TYPE_HASH;
+            case T_STRING:
+               return TYPE_STRING;
+            default:
+                // generic heap object
+                return TYPE_HEAP;
+        }
+    }
+}
+
+/* The name of a type, for debugging */
+const char *
+yjit_type_name(val_type_t type)
+{
+    RUBY_ASSERT(!(type.is_imm && type.is_heap));
+
+    switch (type.type) {
+        case ETYPE_UNKNOWN:
+            if (type.is_imm) {
+                return "unknown immediate";
+            } else if (type.is_heap) {
+                return "unknown heap";
+            } else {
+                return "unknown";
+            }
+        case ETYPE_NIL:
+            return "nil";
+        case ETYPE_TRUE:
+            return "true";
+        case ETYPE_FALSE:
+            return "false";
+        case ETYPE_FIXNUM:
+            return "fixnum";
+        case ETYPE_FLONUM:
+            return "flonum";
+        case ETYPE_ARRAY:
+            return "array";
+        case ETYPE_HASH:
+            return "hash";
+        case ETYPE_SYMBOL:
+            return "symbol";
+        case ETYPE_STRING:
+            return "string";
+    }
+
+    UNREACHABLE_RETURN("");
 }
 
 /*
@@ -614,6 +690,12 @@ block_t* gen_block_version(blockid_t blockid, const ctx_t* start_ctx, rb_executi
 // Generate a block version that is an entry point inserted into an iseq
 uint8_t* gen_entry_point(const rb_iseq_t *iseq, uint32_t insn_idx, rb_execution_context_t *ec)
 {
+    // If we aren't at PC 0, don't generate code
+    // See yjit_pc_guard
+    if (iseq->body->iseq_encoded != ec->cfp->pc) {
+        return NULL;
+    }
+
     // The entry context makes no assumptions about types
     blockid_t blockid = { iseq, insn_idx };
 
