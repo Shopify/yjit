@@ -386,6 +386,10 @@ yjit_entry_prologue(const rb_iseq_t *iseq)
     push(cb, REG_SP);
     push(cb, REG_SP);
 
+    // We are passed EC and CFP
+    mov(cb, REG_EC, C_ARG_REGS[0]);
+    mov(cb, REG_CFP, C_ARG_REGS[1]);
+
     // Load the current SP from the CFP into REG_SP
     mov(cb, REG_SP, member_opnd(REG_CFP, rb_control_frame_t, sp));
 
