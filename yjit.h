@@ -14,6 +14,12 @@
 #define PLATFORM_SUPPORTED_P 1
 #endif
 
+#ifdef __linux__
+#define YJIT_JITDUMP 1
+#else
+#define YJIT_JITDUMP 0
+#endif
+
 #define JIT_ENABLED USE_MJIT
 
 #ifndef YJIT_CHECK_MODE

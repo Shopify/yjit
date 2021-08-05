@@ -1010,9 +1010,12 @@ outgoing_ids(VALUE self)
     return ids;
 }
 
+#if YJIT_JITDUMP
 #include <sys/mman.h>
 
-void jitdump_init() {
+void
+jitdump_init(void)
+{
     FILE *f = rb_yjit_opts.jitdump_file;
     struct jitdump_file_header head;
 
@@ -1037,7 +1040,9 @@ void jitdump_init() {
     fwrite(&head, sizeof(head), 1, f);
 }
 
-void jitdump_code_load(block_t *block) {
+void
+jitdump_code_load(block_t *block)
+{
     FILE *f = rb_yjit_opts.jitdump_file;
     struct jitdump_code_load code_load;
 
@@ -1068,6 +1073,17 @@ void jitdump_code_load(block_t *block) {
     fwrite(function_name, 1, function_name_size, f);
     fwrite(code, 1, code_size, f);
 }
+#else
+void
+jitdump_init(void)
+{
+}
+
+void
+jitdump_code_load(block_t *block)
+{
+}
+#endif
 
 // Can raise RuntimeError
 void
