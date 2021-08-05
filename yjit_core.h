@@ -228,6 +228,9 @@ typedef struct yjit_block_version
     // Bytecode sequence (iseq, idx) this is a version of
     blockid_t blockid;
 
+    // A unique id for tracking
+    uint64_t unique_id;
+
     // Context at the start of the block
     ctx_t ctx;
 

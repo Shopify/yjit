@@ -542,6 +542,9 @@ add_block_version(blockid_t blockid, block_t* block)
             RB_OBJ_WRITTEN(iseq, Qundef, object);
         }
     }
+
+    // record perf dump
+    jitdump_code_load(block);
 }
 
 // Create a new outgoing branch entry for a block
@@ -621,11 +624,19 @@ void limit_block_versions(blockid_t blockid, ctx_t* ctx)
     }
 }
 
+static block_t* allocate_block()
+{
+    static uint64_t last_unique_id = 0;
+    block_t* block = calloc(1, sizeof(block_t));
+    block->unique_id = ++last_unique_id;
+    return block;
+}
+
 // Compile a new block version immediately
 block_t* gen_block_version(blockid_t blockid, const ctx_t* start_ctx, rb_execution_context_t* ec)
 {
     // Allocate a new block version object
-    block_t* block = calloc(1, sizeof(block_t));
+    block_t* block = allocate_block();
     block->blockid = blockid;
     memcpy(&block->ctx, start_ctx, sizeof(ctx_t));
 
@@ -662,7 +673,7 @@ block_t* gen_block_version(blockid_t blockid, const ctx_t* start_ctx, rb_executi
 
         // Allocate a new block version object
         // Use the context from the branch
-        block = calloc(1, sizeof(block_t));
+        block = allocate_block();
         block->blockid = last_branch->targets[0];
         block->ctx = last_branch->target_ctxs[0];
         //memcpy(&block->ctx, ctx, sizeof(ctx_t));
@@ -772,8 +783,12 @@ branch_stub_hit(branch_t* branch, const uint32_t target_idx, rb_execution_contex
                 cb_set_pos(cb, branch->start_pos);
                 branch->gen_fn(cb, branch->dst_addrs[0], branch->dst_addrs[1], branch->shape);
                 RUBY_ASSERT(cb->write_pos <= branch->end_pos && "can't enlarge branches");
+
                 branch->end_pos = cb->write_pos;
                 branch->block->end_pos = cb->write_pos;
+
+                // re-record existing resized block
+                jitdump_code_load(branch->block);
             }
 
             // Compile the new block version
@@ -1101,6 +1116,9 @@ invalidate_block_version(block_t* block)
         branch->end_pos = cb->write_pos;
         branch->block->end_pos = cb->write_pos;
         cb_set_pos(cb, cur_pos);
+
+        // re-record existing resized block
+        jitdump_code_load(branch->block);
 
         if (target_next && branch->end_pos > block->end_pos)
         {

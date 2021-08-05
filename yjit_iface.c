@@ -13,6 +13,7 @@
 #include "yjit_iface.h"
 #include "yjit_codegen.h"
 #include "yjit_core.h"
+#include "jitdump.h"
 #include "darray.h"
 
 #ifdef HAVE_LIBCAPSTONE
@@ -1009,6 +1010,65 @@ outgoing_ids(VALUE self)
     return ids;
 }
 
+#include <sys/mman.h>
+
+void jitdump_init() {
+    FILE *f = rb_yjit_opts.jitdump_file;
+    struct jitdump_file_header head;
+
+    if (!f)
+        return;
+
+    // We need to mmap the file so that it can be later detected by
+    // perf inject
+    long page_size = sysconf(_SC_PAGESIZE);
+    if( mmap(NULL, page_size, PROT_READ | PROT_EXEC, MAP_PRIVATE, fileno(f), 0) == MAP_FAILED) {
+        perror("mmap");
+    }
+
+    head.magic = JITDUMP_MAGIC;
+    head.version = JITDUMP_VERSION;
+    head.total_size = sizeof(head);
+    head.elf_mach = ELF_MACH_X64;
+    head.pad1 = 0;
+    head.pid = getpid();
+    head.timestamp = jitdump_timestamp();
+    head.flags = 0;
+    fwrite(&head, sizeof(head), 1, f);
+}
+
+void jitdump_code_load(block_t *block) {
+    FILE *f = rb_yjit_opts.jitdump_file;
+    struct jitdump_code_load code_load;
+
+    if (!f)
+        return;
+
+    const rb_iseq_t *iseq = block->blockid.iseq;
+    VALUE iseq_label = rb_iseq_label(iseq);
+    const char *function_name = RSTRING_PTR(iseq_label);
+    uint64_t function_name_size = RSTRING_LEN(iseq_label) + 1;
+    const char *code = (const char *)cb->mem_block + block->start_pos;
+    uint64_t code_size = block->end_pos - block->start_pos;
+
+    uint64_t block_id = block->unique_id;
+
+    code_load.p.record_type = JITDUMP_CODE_LOAD;
+    code_load.p.total_size = sizeof(code_load) + function_name_size + code_size;
+    code_load.p.timestamp = jitdump_timestamp();
+
+    code_load.pid = getpid();
+    code_load.tid = gettid();
+    code_load.vma = (uint64_t)code;
+    code_load.code_addr = (uint64_t)code;
+    code_load.code_size = code_size;
+    code_load.code_index = block_id;
+
+    fwrite(&code_load, sizeof(code_load), 1, f);
+    fwrite(function_name, 1, function_name_size, f);
+    fwrite(code, 1, code_size, f);
+}
+
 // Can raise RuntimeError
 void
 rb_yjit_init(struct rb_yjit_options *options)
@@ -1045,6 +1105,8 @@ rb_yjit_init(struct rb_yjit_options *options)
 
     yjit_init_core();
     yjit_init_codegen();
+
+    jitdump_init();
 
     // YJIT Ruby module
     mYjit = rb_define_module("YJIT");

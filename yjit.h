@@ -54,6 +54,9 @@ struct rb_yjit_options {
 
     // Run backend tests
     bool test_backend;
+
+    // Dump JIT'd methods to file for perf
+    FILE *jitdump_file;
 };
 
 RUBY_SYMBOL_EXPORT_BEGIN

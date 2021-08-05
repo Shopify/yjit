@@ -1054,6 +1054,14 @@ setup_yjit_options(const char *s, struct rb_yjit_options *yjit_opt)
     else if (opt_match_noarg(s, l, "test-backend")) {
         yjit_opt->test_backend = true;
     }
+    else if (opt_match_noarg(s, l, "jitdump")) {
+        char fname[32];
+        snprintf(fname, sizeof(fname), "jit-%d.dump", getpid());
+        yjit_opt->jitdump_file = fopen(fname, "w+");
+        if (!yjit_opt->jitdump_file) {
+            perror("fopen");
+        }
+    }
     else {
         rb_raise(rb_eRuntimeError,
                  "invalid yjit option `%s' (--help will show valid yjit options)", s);
