@@ -1062,6 +1062,7 @@ setup_yjit_options(const char *s, struct rb_yjit_options *yjit_opt)
         if (!yjit_opt->jitdump_file) {
             perror("fopen");
         }
+        setvbuf(yjit_opt->jitdump_file, NULL, _IOFBF, 2 * 1024 * 1024);
     }
 #endif
     else {
