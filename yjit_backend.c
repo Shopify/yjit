@@ -324,7 +324,7 @@ void ir_alloc_regs(jitstate_t *prev, jitstate_t *next)
 
     // This is an array of integers that correspond to indices in the SCR_REG
     // list. They track the operand that results from each instruction.
-    int32_t allocations[rb_darray_size(prev->insns)];
+    int32_t *allocations = calloc(rb_darray_size(prev->insns), sizeof(int32_t));
 
     rb_darray_for(prev->insns, insn_idx)
     {
@@ -449,6 +449,8 @@ void ir_alloc_regs(jitstate_t *prev, jitstate_t *next)
                 RUBY_ASSERT(false && "unsupported insn op");
         }
     }
+
+    free(allocations);
 }
 
 /*************************************************/
