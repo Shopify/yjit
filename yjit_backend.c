@@ -190,6 +190,7 @@ const char* ir_op_name(int op)
         case OP_ADD: return "add";
         case OP_MOV: return "mov";
         case OP_RET: return "ret";
+        case OP_SUB: return "sub";
 
         default:
             RUBY_ASSERT(false && "unknown opnd type");
@@ -326,7 +327,8 @@ void ir_alloc_regs(jitstate_t *prev, jitstate_t *next)
         int32_t last_insn_index = rb_darray_get(prev->live_ranges, insn_idx);
 
         switch (insn.op) {
-            case OP_ADD: {
+            case OP_ADD:
+            case OP_SUB: {
                 ir_opnd_t opnd0 = ir_opnd(insn, 0, allocations);
                 ir_opnd_t opnd1 = ir_opnd(insn, 1, allocations);
 
@@ -341,7 +343,7 @@ void ir_alloc_regs(jitstate_t *prev, jitstate_t *next)
                     active[allocated_index] = last_insn_index;
 
                     ir_mov(next, allocated, opnd0);
-                    ir_add(next, allocated, opnd1);
+                    push_insn(next, insn.op, allocated, opnd1);
                 } else {
                     // Since at least one of the two operands is a register,
                     // we're going to use that operand as the destination of
@@ -365,7 +367,7 @@ void ir_alloc_regs(jitstate_t *prev, jitstate_t *next)
                         }
                     }
 
-                    ir_add(next, dest, src);
+                    push_insn(next, insn.op, dest, src);
                 }
                 break;
             }
@@ -444,6 +446,12 @@ void ir_gen_x86(codeblock_t *cb, jitstate_t *jit)
             case OP_RET:
                 ret(cb);
                 break;
+            case OP_SUB: {
+                x86opnd_t opnd0 = ir_gen_x86opnd(rb_darray_get(insn->opnds, 0));
+                x86opnd_t opnd1 = ir_gen_x86opnd(rb_darray_get(insn->opnds, 1));
+                sub(cb, opnd0, opnd1);
+                break;
+            }
             default:
                 RUBY_ASSERT(false && "unsupported insn op");
         }
@@ -516,6 +524,13 @@ void test_backend()
 
     TEST("adding with a chain", 10, {
         ir_mov(jit, IR_REG(RAX), ir_add(jit, ir_add(jit, ir_imm(3), ir_imm(4)), ir_imm(3)));
+        ir_ret(jit);
+    })
+
+    TEST("adding and subtracting", 10, {
+        ir_opnd_t opnd0 = ir_add(jit, ir_imm(3), ir_imm(4));
+        ir_opnd_t opnd1 = ir_sub(jit, ir_imm(5), ir_imm(2));
+        ir_mov(jit, IR_REG(RAX), ir_add(jit, opnd0, opnd1));
         ir_ret(jit);
     })
 
