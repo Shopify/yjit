@@ -188,7 +188,9 @@ const char* ir_op_name(int op)
     switch (op)
     {
         case OP_ADD: return "add";
+        case OP_AND: return "and";
         case OP_MOV: return "mov";
+        case OP_NOT: return "not";
         case OP_RET: return "ret";
         case OP_SUB: return "sub";
 
@@ -261,10 +263,20 @@ ir_opnd_t ir_add(jitstate_t *jit, ir_opnd_t opnd0, ir_opnd_t opnd1)
     return push_insn(jit, OP_ADD, opnd0, opnd1);
 }
 
+ir_opnd_t ir_and(jitstate_t *jit, ir_opnd_t opnd0, ir_opnd_t opnd1)
+{
+    return push_insn(jit, OP_AND, opnd0, opnd1);
+}
+
 ir_opnd_t ir_mov(jitstate_t *jit, ir_opnd_t opnd0, ir_opnd_t opnd1)
 {
     RUBY_ASSERT((opnd0.kind == EIR_INSN_OUT || opnd0.kind == EIR_REG) && "can only mov into a EIR_INSN_OUT or EIR_REG");
     return push_insn(jit, OP_MOV, opnd0, opnd1);
+}
+
+ir_opnd_t ir_not(jitstate_t *jit, ir_opnd_t opnd)
+{
+    return push_insn(jit, OP_NOT, opnd);
 }
 
 void ir_ret(jitstate_t *jit)
@@ -328,6 +340,7 @@ void ir_alloc_regs(jitstate_t *prev, jitstate_t *next)
 
         switch (insn.op) {
             case OP_ADD:
+            case OP_AND:
             case OP_SUB: {
                 ir_opnd_t opnd0 = ir_opnd(insn, 0, allocations);
                 ir_opnd_t opnd1 = ir_opnd(insn, 1, allocations);
@@ -396,6 +409,39 @@ void ir_alloc_regs(jitstate_t *prev, jitstate_t *next)
                 ir_mov(next, opnd0, opnd1);
                 break;
             }
+            case OP_NOT: {
+                ir_opnd_t opnd = ir_opnd(insn, 0, allocations);
+
+                if (opnd.kind != EIR_REG) {
+                    // Since we have an operand that isn't a register, we need a
+                    // temporary register to accomplish this instruction, so
+                    // here we're going to allocate it.
+                    int32_t allocated_index = ir_next_scr_reg_idx(active);
+                    ir_opnd_t allocated = SCR_REGS[allocated_index];
+
+                    allocations[insn_idx] = allocated_index;
+                    active[allocated_index] = last_insn_index;
+
+                    ir_mov(next, allocated, opnd);
+                    ir_not(next, allocated);
+                } else {
+                    // Since the operand is a register, we can just directly not
+                    // that register. If we're about to use a register that is
+                    // one of our scratch registers, then we should mark it as
+                    // active until the result of this instruction is not longer
+                    // needed.
+                    for (int32_t index = 0; index < NUM_SCR_REGS; index++) {
+                        if (ir_opnd_eq(SCR_REGS[index], opnd)) {
+                            allocations[insn_idx] = index;
+                            active[index] = last_insn_index;
+                            break;
+                        }
+                    }
+
+                    ir_not(next, opnd);
+                }
+                break;
+            }
             case OP_RET:
                 ir_ret(next);
                 break;
@@ -437,10 +483,21 @@ void ir_gen_x86(codeblock_t *cb, jitstate_t *jit)
                 add(cb, opnd0, opnd1);
                 break;
             }
+            case OP_AND: {
+                x86opnd_t opnd0 = ir_gen_x86opnd(rb_darray_get(insn->opnds, 0));
+                x86opnd_t opnd1 = ir_gen_x86opnd(rb_darray_get(insn->opnds, 1));
+                and(cb, opnd0, opnd1);
+                break;
+            }
             case OP_MOV: {
                 x86opnd_t opnd0 = ir_gen_x86opnd(rb_darray_get(insn->opnds, 0));
                 x86opnd_t opnd1 = ir_gen_x86opnd(rb_darray_get(insn->opnds, 1));
                 mov(cb, opnd0, opnd1);
+                break;
+            }
+            case OP_NOT: {
+                x86opnd_t opnd = ir_gen_x86opnd(rb_darray_get(insn->opnds, 0));
+                not(cb, opnd);
                 break;
             }
             case OP_RET:
@@ -522,17 +579,29 @@ void test_backend()
         ir_ret(jit);
     })
 
-    TEST("adding with a chain", 10, {
+    TEST("add", 10, {
         ir_mov(jit, IR_REG(RAX), ir_add(jit, ir_add(jit, ir_imm(3), ir_imm(4)), ir_imm(3)));
         ir_ret(jit);
     })
 
-    TEST("adding and subtracting", 10, {
+    TEST("sub", 10, {
         ir_opnd_t opnd0 = ir_add(jit, ir_imm(3), ir_imm(4));
         ir_opnd_t opnd1 = ir_sub(jit, ir_imm(5), ir_imm(2));
         ir_mov(jit, IR_REG(RAX), ir_add(jit, opnd0, opnd1));
         ir_ret(jit);
     })
+
+    TEST("and", 4, {
+        ir_opnd_t opnd0 = ir_add(jit, ir_imm(2), ir_imm(3));
+        ir_opnd_t opnd1 = ir_sub(jit, ir_imm(18), ir_imm(4));
+        ir_mov(jit, IR_REG(RAX), ir_and(jit, opnd0, opnd1));
+        ir_ret(jit);
+    });
+
+    TEST("not", -11, {
+        ir_mov(jit, IR_REG(RAX), ir_not(jit, ir_imm(10)));
+        ir_ret(jit);
+    });
 
     #undef TEST
 
