@@ -365,9 +365,11 @@ cc_new(VALUE klass, ID mid, int argc, const rb_callable_method_entry_t *cme)
     {
         struct rb_class_cc_entries *ccs;
         struct rb_id_table *cc_tbl = RCLASS_CC_TBL(klass);
+        VALUE ccs_data;
 
-        if (rb_id_table_lookup(cc_tbl, mid, (VALUE*)&ccs)) {
+        if (rb_id_table_lookup(cc_tbl, mid, &ccs_data)) {
             // ok
+            ccs = (struct rb_class_cc_entries *)ccs_data;
         }
         else {
             ccs = vm_ccs_create(klass, cme);
@@ -1661,13 +1663,15 @@ rb_each(VALUE obj)
 }
 
 void rb_parser_warn_location(VALUE, int);
+
+static VALUE eval_default_path;
+
 static const rb_iseq_t *
 eval_make_iseq(VALUE src, VALUE fname, int line, const rb_binding_t *bind,
 	       const struct rb_block *base_block)
 {
     const VALUE parser = rb_parser_new();
     const rb_iseq_t *const parent = vm_block_iseq(base_block);
-    VALUE realpath = Qnil;
     rb_iseq_t *iseq = NULL;
     rb_ast_t *ast;
     int isolated_depth = 0;
@@ -1694,10 +1698,14 @@ eval_make_iseq(VALUE src, VALUE fname, int line, const rb_binding_t *bind,
 
     if (fname != Qundef) {
         if (!NIL_P(fname)) fname = rb_fstring(fname);
-	realpath = fname;
     }
     else {
         fname = rb_fstring_lit("(eval)");
+        if (!eval_default_path) {
+            eval_default_path = rb_fstring_lit("(eval)");
+            rb_gc_register_mark_object(eval_default_path);
+        }
+        fname = eval_default_path;
     }
 
     rb_parser_set_context(parser, parent, FALSE);
@@ -1705,7 +1713,7 @@ eval_make_iseq(VALUE src, VALUE fname, int line, const rb_binding_t *bind,
     if (ast->body.root) {
         iseq = rb_iseq_new_eval(&ast->body,
                                 parent->body->location.label,
-                                fname, realpath, INT2FIX(line),
+                                fname, Qnil, INT2FIX(line),
                                 parent, isolated_depth);
     }
     rb_ast_dispose(ast);
@@ -2562,12 +2570,7 @@ rb_f_block_given_p(VALUE _)
     rb_control_frame_t *cfp = ec->cfp;
     cfp = vm_get_ruby_level_caller_cfp(ec, RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp));
 
-    if (cfp != NULL && VM_CF_BLOCK_HANDLER(cfp) != VM_BLOCK_HANDLER_NONE) {
-	return Qtrue;
-    }
-    else {
-	return Qfalse;
-    }
+    return RBOOL(cfp != NULL && VM_CF_BLOCK_HANDLER(cfp) != VM_BLOCK_HANDLER_NONE);
 }
 
 /*
@@ -2590,7 +2593,18 @@ rb_current_realfilepath(void)
     const rb_execution_context_t *ec = GET_EC();
     rb_control_frame_t *cfp = ec->cfp;
     cfp = vm_get_ruby_level_caller_cfp(ec, RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp));
-    if (cfp != 0) return rb_iseq_realpath(cfp->iseq);
+    if (cfp != NULL) {
+        VALUE path = rb_iseq_realpath(cfp->iseq);
+        if (RTEST(path)) return path;
+        // eval context
+        path = rb_iseq_path(cfp->iseq);
+        if (path == eval_default_path) {
+            return Qnil;
+        }
+        else {
+            return path;
+        }
+    }
     return Qnil;
 }
 

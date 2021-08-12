@@ -6,6 +6,11 @@ override mflags := $(filter-out -j%,$(MFLAGS))
 MSPECOPT += $(if $(filter -j%,$(MFLAGS)),-j)
 nproc = $(subst -j,,$(filter -j%,$(MFLAGS)))
 
+ifeq ($(GITHUB_ACTIONS),true)
+override ACTIONS_GROUP = @echo "\#\#[group]$(@:yes-=)"
+override ACTIONS_ENDGROUP = @echo "\#\#[endgroup]"
+endif
+
 ifneq ($(filter %darwin%,$(arch)),)
 INSTRUBY_ENV += SDKROOT=/
 endif
@@ -351,8 +356,8 @@ spec/bundler/%: PHONY
 spec/bundler: test-bundler-parallel
 	$(Q)$(NULLCMD)
 
-spec/%: programs exts PHONY
-	$(RUNRUBY) -r./$(arch)-fake $(srcdir)/spec/mspec/bin/mspec-run -B $(srcdir)/spec/default.mspec $(SPECOPTS) $(patsubst %,$(srcdir)/%,$@)
+spec/%/ spec/%_spec.rb: programs exts PHONY
+	+$(RUNRUBY) -r./$(arch)-fake $(srcdir)/spec/mspec/bin/mspec-run -B $(srcdir)/spec/default.mspec $(SPECOPTS) $(patsubst %,$(srcdir)/%,$@)
 
 benchmark/%: miniruby$(EXEEXT) update-benchmark-driver PHONY
 	$(Q)$(BASERUBY) -rrubygems -I$(srcdir)/benchmark/lib $(srcdir)/benchmark/benchmark-driver/exe/benchmark-driver \
@@ -399,3 +404,7 @@ $(RUBYSPEC_CAPIEXT)/%.$(DLEXT): $(srcdir)/$(RUBYSPEC_CAPIEXT)/%.c $(srcdir)/$(RU
 
 rubyspec-capiext: $(patsubst %.c,$(RUBYSPEC_CAPIEXT)/%.$(DLEXT),$(notdir $(wildcard $(srcdir)/$(RUBYSPEC_CAPIEXT)/*.c)))
 	@ $(NULLCMD)
+
+ifeq ($(ENABLE_SHARED),yes)
+exts: rubyspec-capiext
+endif

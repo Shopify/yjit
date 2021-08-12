@@ -2015,9 +2015,7 @@ rb_str_bytesize(VALUE str)
 static VALUE
 rb_str_empty(VALUE str)
 {
-    if (RSTRING_LEN(str) == 0)
-	return Qtrue;
-    return Qfalse;
+    return RBOOL(RSTRING_LEN(str) == 0);
 }
 
 /*
@@ -2119,15 +2117,15 @@ rb_str_times(VALUE str, VALUE times)
 	rb_raise(rb_eArgError, "negative argument");
     }
     if (RSTRING_LEN(str) == 1 && RSTRING_PTR(str)[0] == 0) {
-       str2 = str_alloc(rb_cString);
-       if (!STR_EMBEDDABLE_P(len, 1)) {
-           RSTRING(str2)->as.heap.aux.capa = len;
-           RSTRING(str2)->as.heap.ptr = ZALLOC_N(char, (size_t)len + 1);
-           STR_SET_NOEMBED(str2);
-       }
-       STR_SET_LEN(str2, len);
-       rb_enc_copy(str2, str);
-       return str2;
+        str2 = str_alloc(rb_cString);
+        if (!STR_EMBEDDABLE_P(len, 1)) {
+            RSTRING(str2)->as.heap.aux.capa = len;
+            RSTRING(str2)->as.heap.ptr = ZALLOC_N(char, (size_t)len + 1);
+            STR_SET_NOEMBED(str2);
+        }
+        STR_SET_LEN(str2, len);
+        rb_enc_copy(str2, str);
+        return str2;
     }
     if (len && LONG_MAX/len <  RSTRING_LEN(str)) {
 	rb_raise(rb_eArgError, "argument too big");
@@ -3449,9 +3447,9 @@ rb_str_eql(VALUE str1, VALUE str2)
  *    string <=> other_string -> -1, 0, 1, or nil
  *
  *  Compares +self+ and +other_string+, returning:
- *  - -1 if +other_string+ is smaller.
+ *  - -1 if +other_string+ is larger.
  *  - 0 if the two are equal.
- *  - 1 if +other_string+ is larger.
+ *  - 1 if +other_string+ is smaller.
  *  - +nil+ if the two are incomparable.
  *
  *  Examples:
@@ -3483,9 +3481,9 @@ static VALUE str_casecmp_p(VALUE str1, VALUE str2);
  *    str.casecmp(other_str) -> -1, 0, 1, or nil
  *
  *  Compares +self+ and +other_string+, ignoring case, and returning:
- *  - -1 if +other_string+ is smaller.
+ *  - -1 if +other_string+ is larger.
  *  - 0 if the two are equal.
- *  - 1 if +other_string+ is larger.
+ *  - 1 if +other_string+ is smaller.
  *  - +nil+ if the two are incomparable.
  *
  *  Examples:
@@ -4629,7 +4627,7 @@ rb_str_include_range_p(VALUE beg, VALUE end, VALUE val, VALUE exclusive)
     }
     rb_str_upto_each(beg, end, RTEST(exclusive), include_range_i, (VALUE)&val);
 
-    return NIL_P(val) ? Qtrue : Qfalse;
+    return RBOOL(NIL_P(val));
 }
 
 static VALUE
@@ -5962,8 +5960,7 @@ rb_str_include(VALUE str, VALUE arg)
     StringValue(arg);
     i = rb_str_index(str, arg, 0);
 
-    if (i == -1) return Qfalse;
-    return Qtrue;
+    return RBOOL(i != -1);
 }
 
 
@@ -9325,9 +9322,7 @@ rb_str_lstrip_bang(VALUE str)
 	s = start + loffset;
 	memmove(start, s, len);
 	STR_SET_LEN(str, len);
-#if !SHARABLE_MIDDLE_SUBSTRING
 	TERM_FILL(start+len, rb_enc_mbminlen(enc));
-#endif
 	return str;
     }
     return Qnil;
@@ -9414,9 +9409,7 @@ rb_str_rstrip_bang(VALUE str)
 	long len = olen - roffset;
 
 	STR_SET_LEN(str, len);
-#if !SHARABLE_MIDDLE_SUBSTRING
 	TERM_FILL(start+len, rb_enc_mbminlen(enc));
-#endif
 	return str;
     }
     return Qnil;
@@ -9485,9 +9478,7 @@ rb_str_strip_bang(VALUE str)
 	    memmove(start, start + loffset, len);
 	}
 	STR_SET_LEN(str, len);
-#if !SHARABLE_MIDDLE_SUBSTRING
 	TERM_FILL(start+len, rb_enc_mbminlen(enc));
-#endif
 	return str;
     }
     return Qnil;
@@ -10470,7 +10461,7 @@ rb_str_valid_encoding_p(VALUE str)
 {
     int cr = rb_enc_str_coderange(str);
 
-    return cr == ENC_CODERANGE_BROKEN ? Qfalse : Qtrue;
+    return RBOOL(cr != ENC_CODERANGE_BROKEN);
 }
 
 /*
@@ -10488,7 +10479,7 @@ rb_str_is_ascii_only_p(VALUE str)
 {
     int cr = rb_enc_str_coderange(str);
 
-    return cr == ENC_CODERANGE_7BIT ? Qtrue : Qfalse;
+    return RBOOL(cr == ENC_CODERANGE_7BIT);
 }
 
 /**
