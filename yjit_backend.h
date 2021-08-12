@@ -88,6 +88,7 @@ STATIC_ASSERT(ir_opnd_size, sizeof(ir_opnd_t) <= 16);
 #define IR_REG(x86reg) ( (ir_opnd_t){ .num_bits = 64, .kind = EIR_REG, .as.reg.idx = x86reg.as.reg.reg_no } )
 
 ir_opnd_t ir_code_ptr(uint8_t* code_ptr);
+ir_opnd_t ir_const_ptr(void *ptr);
 ir_opnd_t ir_imm(int64_t val);
 ir_opnd_t ir_mem(uint8_t num_bits, ir_opnd_t base, int32_t disp);
 
@@ -130,6 +131,7 @@ enum yjit_ir_op
     // TODO:
     //CALL_CFUNC (var-arg...)
     OP_RET,
+    OP_RETVAL,
 
     //COUNTER_INC (counter_name)
 
