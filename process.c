@@ -3148,14 +3148,15 @@ NORETURN(static VALUE f_exec(int c, const VALUE *a, VALUE _));
  *  shell expansion before being executed.
  *
  *  The standard shell always means <code>"/bin/sh"</code> on Unix-like systems,
- *  same as <code>ENV["RUBYSHELL"]</code>
- *  (or <code>ENV["COMSPEC"]</code> on Windows NT series), and similar.
+ *  otherwise, <code>ENV["RUBYSHELL"]</code> or <code>ENV["COMSPEC"]</code> on
+ *  Windows and similar.  The command is passed as an argument to the
+ *  <code>"-c"</code> switch to the shell, except in the case of +COMSPEC+.
  *
  *  If the string from the first form (<code>exec("command")</code>) follows
  *  these simple rules:
  *
  *  * no meta characters
- *  * no shell reserved word and no special built-in
+ *  * not starting with shell reserved word or special built-in
  *  * Ruby invokes the command directly without shell
  *
  *  You can force shell invocation by adding ";" to the string (because ";" is
