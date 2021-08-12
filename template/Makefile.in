@@ -256,6 +256,9 @@ MESSAGE_END = ; do echo "$$line"; done
 ECHO_BEGIN = @sep=''; for word in
 ECHO_END = ; do echo @ECHO_N@ "$$sep'$$word'@ECHO_C@"; sep=' '; done; echo
 
+ACTIONS_GROUP = @$(NULLCMD) $(empty)
+ACTIONS_ENDGROUP = @$(NULLCMD)
+
 DESTDIR       = @DESTDIR@
 
 configure_args = @configure_args@
@@ -277,7 +280,7 @@ miniruby$(EXEEXT):
 $(PROGRAM):
 		@$(RM) $@
 		$(ECHO) linking $@
-		$(Q) $(PURIFY) $(CC) $(LDFLAGS) $(XLDFLAGS) $(MAINOBJ) $(LIBRUBYARG) $(MAINLIBS) $(LIBS) $(EXTLIBS) $(OUTFLAG)$@
+		$(Q) $(PURIFY) $(CC) $(LDFLAGS) $(XLDFLAGS) $(MAINOBJ) $(EXTOBJS) $(LIBRUBYARG) $(MAINLIBS) $(LIBS) $(EXTLIBS) $(OUTFLAG)$@
 		$(Q) $(POSTLINK)
 
 PRE_LIBRUBY_UPDATE = [ -n "$(LIBRUBY_SO_UPDATE)" ] || $(gnumake:yes=exec) $(RM) $(LIBRUBY_EXTS)

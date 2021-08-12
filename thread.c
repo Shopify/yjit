@@ -632,6 +632,7 @@ thread_cleanup_func_before_exec(void *th_ptr)
 {
     rb_thread_t *th = th_ptr;
     th->status = THREAD_KILLED;
+
     // The thread stack doesn't exist in the forked process:
     th->ec->machine.stack_start = th->ec->machine.stack_end = NULL;
 
@@ -688,7 +689,7 @@ rb_vm_proc_local_ep(VALUE proc)
 VALUE rb_vm_invoke_proc_with_self(rb_execution_context_t *ec, rb_proc_t *proc, VALUE self,
                                   int argc, const VALUE *argv, int kw_splat, VALUE passed_block_handler);
 
-static void
+static VALUE
 thread_do_start_proc(rb_thread_t *th)
 {
     VALUE args = th->invoke_arg.proc.args;
@@ -702,7 +703,6 @@ thread_do_start_proc(rb_thread_t *th)
     th->ec->root_lep = rb_vm_proc_local_ep(procval);
     th->ec->root_svar = Qfalse;
 
-    EXEC_EVENT_HOOK(th->ec, RUBY_EVENT_THREAD_BEGIN, th->self, 0, 0, 0, Qundef);
     vm_check_ints_blocking(th->ec);
 
     if (th->invoke_type == thread_invoke_type_ractor_proc) {
@@ -713,11 +713,12 @@ thread_do_start_proc(rb_thread_t *th)
         rb_ractor_receive_parameters(th->ec, th->ractor, args_len, (VALUE *)args_ptr);
         vm_check_ints_blocking(th->ec);
 
-        // kick thread
-        th->value = rb_vm_invoke_proc_with_self(th->ec, proc, self,
-                                                args_len, args_ptr,
-                                                th->invoke_arg.proc.kw_splat,
-                                                VM_BLOCK_HANDLER_NONE);
+        return rb_vm_invoke_proc_with_self(
+            th->ec, proc, self,
+            args_len, args_ptr,
+            th->invoke_arg.proc.kw_splat,
+            VM_BLOCK_HANDLER_NONE
+        );
     }
     else {
         args_len = RARRAY_LENINT(args);
@@ -733,17 +734,12 @@ thread_do_start_proc(rb_thread_t *th)
 
         vm_check_ints_blocking(th->ec);
 
-        // kick thread
-        th->value = rb_vm_invoke_proc(th->ec, proc,
-                                      args_len, args_ptr,
-                                      th->invoke_arg.proc.kw_splat,
-                                      VM_BLOCK_HANDLER_NONE);
-    }
-
-    EXEC_EVENT_HOOK(th->ec, RUBY_EVENT_THREAD_END, th->self, 0, 0, 0, Qundef);
-
-    if (th->invoke_type == thread_invoke_type_ractor_proc) {
-        rb_ractor_atexit(th->ec, th->value);
+        return rb_vm_invoke_proc(
+            th->ec, proc,
+            args_len, args_ptr,
+            th->invoke_arg.proc.kw_splat,
+            VM_BLOCK_HANDLER_NONE
+        );
     }
 }
 
@@ -751,20 +747,33 @@ static void
 thread_do_start(rb_thread_t *th)
 {
     native_set_thread_name(th);
+    VALUE result = Qundef;
+
+    EXEC_EVENT_HOOK(th->ec, RUBY_EVENT_THREAD_BEGIN, th->self, 0, 0, 0, Qundef);
 
     switch (th->invoke_type) {
       case thread_invoke_type_proc:
+        result = thread_do_start_proc(th);
+        break;
+
       case thread_invoke_type_ractor_proc:
-        thread_do_start_proc(th);
+        result = thread_do_start_proc(th);
+        rb_ractor_atexit(th->ec, result);
         break;
+
       case thread_invoke_type_func:
-        th->value = (*th->invoke_arg.func.func)(th->invoke_arg.func.arg);
+        result = (*th->invoke_arg.func.func)(th->invoke_arg.func.arg);
         break;
+
       case thread_invoke_type_none:
         rb_bug("unreachable");
     }
 
     rb_fiber_scheduler_set(Qnil);
+
+    th->value = result;
+
+    EXEC_EVENT_HOOK(th->ec, RUBY_EVENT_THREAD_END, th->self, 0, 0, 0, Qundef);
 }
 
 void rb_ec_clear_current_thread_trace_func(const rb_execution_context_t *ec);
@@ -817,6 +826,9 @@ thread_start_func_2(rb_thread_t *th, VALUE *stack_start)
 
     thread_debug("thread start (get lock): %p\n", (void *)th);
 
+    // Ensure that we are not joinable.
+    VM_ASSERT(th->value == Qundef);
+
     EC_PUSH_TAG(th->ec);
 
     if ((state = EC_EXEC_TAG()) == TAG_NONE) {
@@ -857,6 +869,12 @@ thread_start_func_2(rb_thread_t *th, VALUE *stack_start)
         th->value = Qnil;
     }
 
+    // The thread is effectively finished and can be joined.
+    VM_ASSERT(th->value != Qundef);
+
+    rb_threadptr_join_list_wakeup(th);
+    rb_threadptr_unlock_all_locking_mutexes(th);
+
     if (th->invoke_type == thread_invoke_type_ractor_proc) {
         rb_thread_terminate_all(th);
         rb_ractor_teardown(th->ec);
@@ -873,9 +891,6 @@ thread_start_func_2(rb_thread_t *th, VALUE *stack_start)
         /* treat with normal error object */
         rb_threadptr_raise(ractor_main_th, 1, &errinfo);
     }
-
-    rb_threadptr_join_list_wakeup(th);
-    rb_threadptr_unlock_all_locking_mutexes(th);
 
     EC_POP_TAG();
 
@@ -1153,6 +1168,12 @@ remove_from_join_list(VALUE arg)
 
 static rb_hrtime_t *double2hrtime(rb_hrtime_t *, double);
 
+static int
+thread_finished(rb_thread_t *th)
+{
+    return th->status == THREAD_KILLED || th->value != Qundef;
+}
+
 static VALUE
 thread_join_sleep(VALUE arg)
 {
@@ -1179,7 +1200,7 @@ thread_join_sleep(VALUE arg)
         end = rb_hrtime_add(*limit, rb_hrtime_now());
     }
 
-    while (target_th->status != THREAD_KILLED) {
+    while (!thread_finished(target_th)) {
         VALUE scheduler = rb_fiber_scheduler_current();
 
         if (scheduler != Qnil) {
@@ -2303,12 +2324,7 @@ rb_thread_pending_interrupt_p(int argc, VALUE *argv, VALUE target_thread)
         if (!rb_obj_is_kind_of(err, rb_cModule)) {
             rb_raise(rb_eTypeError, "class or module required for rescue clause");
         }
-        if (rb_threadptr_pending_interrupt_include_p(target_th, err)) {
-            return Qtrue;
-        }
-        else {
-            return Qfalse;
-        }
+        return RBOOL(rb_threadptr_pending_interrupt_include_p(target_th, err));
     }
     else {
 	return Qtrue;
@@ -2955,7 +2971,7 @@ rb_thread_s_main(VALUE klass)
 static VALUE
 rb_thread_s_abort_exc(VALUE _)
 {
-    return GET_THREAD()->vm->thread_abort_on_exception ? Qtrue : Qfalse;
+    return RBOOL(GET_THREAD()->vm->thread_abort_on_exception);
 }
 
 
@@ -3015,7 +3031,7 @@ rb_thread_s_abort_exc_set(VALUE self, VALUE val)
 static VALUE
 rb_thread_abort_exc(VALUE thread)
 {
-    return rb_thread_ptr(thread)->abort_on_exception ? Qtrue : Qfalse;
+    return RBOOL(rb_thread_ptr(thread)->abort_on_exception);
 }
 
 
@@ -3085,7 +3101,7 @@ rb_thread_abort_exc_set(VALUE thread, VALUE val)
 static VALUE
 rb_thread_s_report_exc(VALUE _)
 {
-    return GET_THREAD()->vm->thread_report_on_exception ? Qtrue : Qfalse;
+    return RBOOL(GET_THREAD()->vm->thread_report_on_exception);
 }
 
 
@@ -3141,7 +3157,7 @@ rb_thread_s_report_exc_set(VALUE self, VALUE val)
 static VALUE
 rb_thread_s_ignore_deadlock(VALUE _)
 {
-    return GET_THREAD()->vm->thread_ignore_deadlock ? Qtrue : Qfalse;
+    return RBOOL(GET_THREAD()->vm->thread_ignore_deadlock);
 }
 
 
@@ -3192,7 +3208,7 @@ rb_thread_s_ignore_deadlock_set(VALUE self, VALUE val)
 static VALUE
 rb_thread_report_exc(VALUE thread)
 {
-    return rb_thread_ptr(thread)->report_on_exception ? Qtrue : Qfalse;
+    return RBOOL(rb_thread_ptr(thread)->report_on_exception);
 }
 
 
@@ -3324,11 +3340,11 @@ rb_thread_status(VALUE thread)
 static VALUE
 rb_thread_alive_p(VALUE thread)
 {
-    if (rb_threadptr_dead(rb_thread_ptr(thread))) {
-	return Qfalse;
+    if (thread_finished(rb_thread_ptr(thread))) {
+        return Qfalse;
     }
     else {
-	return Qtrue;
+        return Qtrue;
     }
 }
 
@@ -3868,14 +3884,7 @@ rb_thread_variable_p(VALUE thread, VALUE key)
     }
     locals = rb_thread_local_storage(thread);
 
-    if (rb_hash_lookup(locals, rb_to_symbol(key)) != Qnil) {
-        return Qtrue;
-    }
-    else {
-        return Qfalse;
-    }
-
-    return Qfalse;
+    return RBOOL(rb_hash_lookup(locals, rb_to_symbol(key)) != Qnil);
 }
 
 /*
@@ -4933,9 +4942,7 @@ thgroup_enclosed_p(VALUE group)
     struct thgroup *data;
 
     TypedData_Get_Struct(group, struct thgroup, &thgroup_data_type, data);
-    if (data->enclosed)
-	return Qtrue;
-    return Qfalse;
+    return RBOOL(data->enclosed);
 }
 
 
@@ -5095,7 +5102,7 @@ rb_thread_shield_release(VALUE self)
 {
     VALUE mutex = thread_shield_get_mutex(self);
     rb_mutex_unlock(mutex);
-    return rb_thread_shield_waiting(self) > 0 ? Qtrue : Qfalse;
+    return RBOOL(rb_thread_shield_waiting(self) > 0);
 }
 
 /*
@@ -5107,7 +5114,7 @@ rb_thread_shield_destroy(VALUE self)
     VALUE mutex = thread_shield_get_mutex(self);
     DATA_PTR(self) = 0;
     rb_mutex_unlock(mutex);
-    return rb_thread_shield_waiting(self) > 0 ? Qtrue : Qfalse;
+    return RBOOL(rb_thread_shield_waiting(self) > 0);
 }
 
 static VALUE
