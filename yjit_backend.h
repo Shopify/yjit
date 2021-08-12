@@ -103,7 +103,7 @@ enum yjit_ir_op
     // Arithmetic instructions
     OP_ADD,
     OP_SUB,
-    OP_MUL,
+    // OP_MUL,
     OP_AND,
     OP_NOT,
 
