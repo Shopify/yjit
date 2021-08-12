@@ -3006,12 +3006,7 @@ const rb_data_type_t ruby_threadptr_data_type = {
 VALUE
 rb_obj_is_thread(VALUE obj)
 {
-    if (rb_typeddata_is_kind_of(obj, &thread_data_type)) {
-	return Qtrue;
-    }
-    else {
-	return Qfalse;
-    }
+    return RBOOL(rb_typeddata_is_kind_of(obj, &thread_data_type));
 }
 
 static VALUE
@@ -3086,6 +3081,8 @@ th_init(rb_thread_t *th, VALUE self)
     th->thread_id_string[0] = '\0';
 #endif
 
+    th->value = Qundef;
+
 #if OPT_CALL_THREADED_CODE
     th->retval = Qundef;
 #endif
@@ -3098,16 +3095,17 @@ static VALUE
 ruby_thread_init(VALUE self)
 {
     rb_thread_t *th = GET_THREAD();
-    rb_thread_t *targe_th = rb_thread_ptr(self);
+    rb_thread_t *target_th = rb_thread_ptr(self);
     rb_vm_t *vm = th->vm;
 
-    targe_th->vm = vm;
-    th_init(targe_th, self);
+    target_th->vm = vm;
+    th_init(target_th, self);
 
-    targe_th->top_wrapper = 0;
-    targe_th->top_self = rb_vm_top_self();
-    targe_th->ec->root_svar = Qfalse;
-    targe_th->ractor = th->ractor;
+    target_th->top_wrapper = 0;
+    target_th->top_self = rb_vm_top_self();
+    target_th->ec->root_svar = Qfalse;
+    target_th->ractor = th->ractor;
+
     return self;
 }
 
@@ -3228,7 +3226,7 @@ core_hash_merge_kwd(VALUE hash, VALUE kw)
 static VALUE
 jit_enabled_p(VALUE _)
 {
-    return mjit_enabled ? Qtrue : Qfalse;
+    return RBOOL(mjit_enabled);
 }
 
 static VALUE
@@ -3984,24 +3982,21 @@ usage_analysis_register_stop(VALUE self)
 static VALUE
 usage_analysis_insn_running(VALUE self)
 {
-  if (ruby_vm_collect_usage_func_insn == 0) return Qfalse;
-  return Qtrue;
+  return RBOOL(ruby_vm_collect_usage_func_insn != 0);
 }
 
 /* :nodoc: */
 static VALUE
 usage_analysis_operand_running(VALUE self)
 {
-  if (ruby_vm_collect_usage_func_operand == 0) return Qfalse;
-  return Qtrue;
+  return RBOOL(ruby_vm_collect_usage_func_operand != 0);
 }
 
 /* :nodoc: */
 static VALUE
 usage_analysis_register_running(VALUE self)
 {
-  if (ruby_vm_collect_usage_func_register == 0) return Qfalse;
-  return Qtrue;
+  return RBOOL(ruby_vm_collect_usage_func_register != 0);
 }
 
 /* :nodoc: */

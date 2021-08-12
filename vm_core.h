@@ -1035,7 +1035,6 @@ typedef struct rb_thread_struct {
 
     /* fiber */
     rb_fiber_t *root_fiber;
-    rb_jmpbuf_t root_jmpbuf;
 
     VALUE scheduler;
     unsigned blocking;
