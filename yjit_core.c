@@ -136,11 +136,14 @@ ctx_get_opnd_type(const ctx_t* ctx, insn_opnd_t opnd)
     if (opnd.is_self)
         return ctx->self_type;
 
-    if (ctx->stack_size >= MAX_TEMP_TYPES)
+    RUBY_ASSERT(opnd.idx < ctx->stack_size);
+    int stack_idx = ctx->stack_size - 1 - opnd.idx;
+
+    // If outside of tracked range, do nothing
+    if (stack_idx >= MAX_TEMP_TYPES)
         return TYPE_UNKNOWN;
 
-    RUBY_ASSERT(opnd.idx < ctx->stack_size);
-    temp_mapping_t mapping = ctx->temp_mapping[ctx->stack_size - 1 - opnd.idx];
+    temp_mapping_t mapping = ctx->temp_mapping[stack_idx];
 
     switch (mapping.kind)
     {
@@ -263,6 +266,15 @@ void ctx_set_local_type(ctx_t* ctx, size_t idx, val_type_t type)
 {
     if (idx >= MAX_LOCAL_TYPES)
         return;
+
+    // If any values on the stack map to this local we must detach them
+    for (int i = 0; i < MAX_TEMP_TYPES; i++) {
+        temp_mapping_t *mapping = &ctx->temp_mapping[i];
+        if (mapping->kind == TEMP_LOCAL && mapping->idx == idx) {
+            ctx->temp_types[i] = ctx->local_types[mapping->idx];
+            *mapping = MAP_STACK;
+        }
+    }
 
     ctx->local_types[idx] = type;
 }
