@@ -1,0 +1,14 @@
+name: Advance the "nocrashy" tag
+on:
+  schedule:
+    # Run twice daily at 5:47 and 11:47
+    - cron: '47 5,11 * * *'
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Advance the tag
+        run: |
+          ruby misc/advance_nocrashy_tag.rb
