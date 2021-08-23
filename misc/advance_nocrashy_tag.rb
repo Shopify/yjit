@@ -60,7 +60,9 @@ def ghapi_post(api_uri, params, verb: :post)
     result = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true) { |http| http.request(req) }
 
     unless result.is_a?(Net::HTTPSuccess)
-        $stderr.puts "Error in HTTP POST: #{result.inspect}"
+        $stderr.puts "Error in HTTP #{verb.upcase}: #{result.inspect}"
+        $stderr.puts result.body
+        $stderr.puts "------"
         raise "HTTP error when posting to #{api_uri}!"
     end
 
@@ -76,7 +78,6 @@ def get_last_merge_commits(to_check: 10)
     # Query in pages
     loop do
         per_page = [ COMMITS_TO_QUERY - queried, 30 ].min
-        puts "Grabbing latest commits, page #{page}, #{per_page} entries..."
         this_page = ghapi_get_response("/repos/Shopify/yjit/commits?per_page=#{per_page}&page=#{page}&sha=main")
         data.concat(this_page)
         page += 1
@@ -84,7 +85,7 @@ def get_last_merge_commits(to_check: 10)
         break if queried >= COMMITS_TO_QUERY
     end
     if data.size != COMMITS_TO_QUERY
-        STDERR.puts "Something went wrong querying commits in pages!"
+        $stderr.puts "Something went wrong querying commits in pages! The total returned size is too small."
         exit -1
     end
 
