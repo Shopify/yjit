@@ -11,4 +11,6 @@ jobs:
       - uses: actions/checkout@v2
       - name: Advance the tag
         run: |
+          export NOCRASHY_TOKEN=${{ secrets.NOCRASHY_TOKEN }}
+          export NOCRASHY_USER=${{ secrets.NOCRASHY_USER }}
           ruby misc/advance_nocrashy_tag.rb
