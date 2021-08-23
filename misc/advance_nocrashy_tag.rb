@@ -134,13 +134,13 @@ def current_nocrashy
     end
 end
 
-def update_nocrashy(current, next)
-    if current
+def update_nocrashy(current_sha, next_sha)
+    if current_sha
         puts "Updating nocrashy tag..."
-        ghapi_post("/repos/Shopify/yjit/git/refs/tags/nocrashy", { "sha" => next, "force" => "true" }, verb: :patch)
+        ghapi_post("/repos/Shopify/yjit/git/refs/tags/nocrashy", { "sha" => next_sha, "force" => "true" }, verb: :patch)
     else
         puts "Creating nocrashy tag..."
-        ghapi_post("/repos/Shopify/yjit/git/refs", { "ref" => "tags/nocrashy", "sha" => next }, verb: :post)
+        ghapi_post("/repos/Shopify/yjit/git/refs", { "ref" => "tags/nocrashy", "sha" => next_sha }, verb: :post)
     end
 end
 
@@ -178,13 +178,15 @@ end
 
 #pp success_by_commit
 
-# Grab the latest commit that's sufficiently un-crashy
-latest_nocrashy = commits_considered.detect.with_index do |sha, idx|
+# Grab the latest series that's sufficiently un-crashy
+latest_series = commits_considered.detect.with_index do |sha, idx|
     idx + 2 < commits_considered.size &&
         success_by_commit[sha] == :success &&
         success_by_commit[commits_considered[idx + 1]] == :success &&
         success_by_commit[commits_considered[idx + 2]] == :success
 end
+latest_series_index = commits_considered.index(latest_nocrashy)
+latest_nocrashy = commits_considered[latest_series_index + 2] # We want the third of the series, so there are two successes after it
 
 repo_nocrashy = current_nocrashy()
 
