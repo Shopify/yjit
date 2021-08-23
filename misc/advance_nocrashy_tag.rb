@@ -55,6 +55,7 @@ def ghapi_post(api_uri, params, verb: :post)
     req = req_class.new(uri)
     req.basic_auth ENV['NOCRASHY_USER'], ENV['NOCRASHY_TOKEN']
     req['Accept'] = "application/vnd.github.v3+json"
+    req['Content-Type'] = "application/json"
     req.set_form_data(params)
     result = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true) { |http| http.request(req) }
 
@@ -100,9 +101,9 @@ def get_last_merge_commits(to_check: 10)
             exit -1
         end
         msg = commit_by_sha[next_sha]["commit"]["message"]
-        unless msg.include?("Merge pull request")
-            raise "Top-level SHA #{next_sha.inspect} is not a merge of a PR! I can't work like this. You can't fire me, I quit!"
-        end
+        #unless msg.include?("Merge pull request")
+        #    raise "Top-level SHA #{next_sha.inspect} is not a merge of a PR!"
+        #end
 
         merge_commits.push(next_sha)
         next_sha = commit_by_sha[next_sha]["parents"][0]["sha"]
@@ -136,11 +137,11 @@ end
 
 def update_nocrashy(current_sha, next_sha)
     if current_sha
-        puts "Updating nocrashy tag..."
+        puts "Updating nocrashy tag from #{current_sha} to #{next_sha}..."
         ghapi_post("/repos/Shopify/yjit/git/refs/tags/nocrashy", { "sha" => next_sha, "force" => "true" }, verb: :patch)
     else
-        puts "Creating nocrashy tag..."
-        ghapi_post("/repos/Shopify/yjit/git/refs", { "ref" => "tags/nocrashy", "sha" => next_sha }, verb: :post)
+        puts "Creating nocrashy tag for SHA #{next_sha}..."
+        ghapi_post("/repos/Shopify/yjit/git/refs", { "ref" => "refs/tags/nocrashy", "sha" => next_sha }, verb: :post)
     end
 end
 
@@ -185,7 +186,7 @@ latest_series = commits_considered.detect.with_index do |sha, idx|
         success_by_commit[commits_considered[idx + 1]] == :success &&
         success_by_commit[commits_considered[idx + 2]] == :success
 end
-latest_series_index = commits_considered.index(latest_nocrashy)
+latest_series_index = commits_considered.index(latest_series)
 latest_nocrashy = commits_considered[latest_series_index + 2] # We want the third of the series, so there are two successes after it
 
 repo_nocrashy = current_nocrashy()
@@ -196,7 +197,7 @@ if repo_nocrashy == latest_nocrashy
 end
 
 # Let's make sure that the nocrashy tag seems to be moving forward appropriately
-commit_move_distance = `git ref-list --count #{repo_nocrashy}...#{latest_nocrashy}`.chomp.to_i
+commit_move_distance = `git rev-list --count #{repo_nocrashy}...#{latest_nocrashy}`.chomp.to_i
 
 if commit_move_distance == 0
     puts "ARGH. Something has gone wrong. We're seeing some kind of nonlinear move. Maybe from a push -f?"
@@ -204,6 +205,6 @@ if commit_move_distance == 0
     exit -1
 end
 
-puts "Updating nocrashy tag on the repo..."
+puts "Creating/updating nocrashy tag on the repo..."
 update_nocrashy(current_nocrashy, latest_nocrashy)
 puts "Tag updated. All's well."
