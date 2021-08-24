@@ -17,6 +17,8 @@ enum yjit_ir_opnd_type
     EIR_VALUE,      // Immediate Ruby value, may be GC'd, movable
     EIR_INSN_OUT,   // Output of a preceding instruction in this block
     EIR_CODE_PTR,   // Pointer to a piece of code (e.g. side-exit)
+    EIR_LABEL_NAME, // A label without an index in the output
+    EIR_LABEL_IDX,  // A label that has been indexed
 
     // Low-level operands, for lowering
     EIR_MEM,        // Memory location (num_bits, base_ptr, const_offset)
@@ -65,6 +67,9 @@ typedef struct yjit_ir_opnd_t
 
         // For branch targets
         uint8_t* code_ptr;
+
+        // For strings (names, comments, etc.)
+        char* str;
     } as;
 
     // Size in bits (8, 16, 32, 64)
@@ -104,7 +109,6 @@ enum yjit_ir_op
     // Arithmetic instructions
     OP_ADD,
     OP_SUB,
-    // OP_MUL,
     OP_AND,
     OP_NOT,
 
