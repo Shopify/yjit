@@ -986,6 +986,23 @@ gen_putself(jitstate_t* jit, ctx_t* ctx)
     return YJIT_KEEP_COMPILING;
 }
 
+static codegen_status_t
+gen_putspecialobject(jitstate_t* jit, ctx_t* ctx)
+{
+    enum vm_special_object_type type = (enum vm_special_object_type)jit_get_arg(jit, 0);
+
+    if (type == VM_SPECIAL_OBJECT_VMCORE) {
+        x86opnd_t stack_top = ctx_stack_push(ctx, TYPE_HEAP);
+        jit_mov_gc_ptr(jit, cb, REG0, rb_mRubyVMFrozenCore);
+        mov(cb, stack_top, REG0);
+        return YJIT_KEEP_COMPILING;
+    } else {
+        // TODO: implement for VM_SPECIAL_OBJECT_CBASE and
+        // VM_SPECIAL_OBJECT_CONST_BASE
+        return YJIT_CANT_COMPILE;
+    }
+}
+
 // Compute the index of a local variable from its slot index
 static uint32_t
 slot_to_local_idx(const rb_iseq_t *iseq, int32_t slot_idx)
@@ -1434,9 +1451,9 @@ gen_get_ivar(jitstate_t *jit, ctx_t *ctx, const int max_chain_depth, VALUE compt
             mov(cb, REG1, ivar_opnd);
 
             // Guard that the variable is not Qundef
-            // TODO: use cmov to push Qnil in this case
             cmp(cb, REG1, imm_opnd(Qundef));
-            je_ptr(cb, COUNTED_EXIT(side_exit, getivar_undef));
+            mov(cb, REG0, imm_opnd(Qnil));
+            cmove(cb, REG1, REG0);
 
             // Push the ivar on the stack
             x86opnd_t out_opnd = ctx_stack_push(ctx, TYPE_UNKNOWN);
@@ -1470,7 +1487,8 @@ gen_get_ivar(jitstate_t *jit, ctx_t *ctx, const int max_chain_depth, VALUE compt
 
             // Check that the ivar is not Qundef
             cmp(cb, REG0, imm_opnd(Qundef));
-            je_ptr(cb, COUNTED_EXIT(side_exit, getivar_undef));
+            mov(cb, REG1, imm_opnd(Qnil));
+            cmove(cb, REG0, REG1);
 
             // Push the ivar on the stack
             x86opnd_t out_opnd = ctx_stack_push(ctx, TYPE_UNKNOWN);
@@ -2234,6 +2252,12 @@ gen_opt_size(jitstate_t *jit, ctx_t *ctx)
 
 static codegen_status_t
 gen_opt_length(jitstate_t *jit, ctx_t *ctx)
+{
+    return gen_opt_send_without_block(jit, ctx);
+}
+
+static codegen_status_t
+gen_opt_regexpmatch2(jitstate_t *jit, ctx_t *ctx)
 {
     return gen_opt_send_without_block(jit, ctx);
 }
@@ -3685,6 +3709,7 @@ yjit_init_codegen(void)
     yjit_reg_op(BIN(putobject_INT2FIX_0_), gen_putobject_int2fix);
     yjit_reg_op(BIN(putobject_INT2FIX_1_), gen_putobject_int2fix);
     yjit_reg_op(BIN(putself), gen_putself);
+    yjit_reg_op(BIN(putspecialobject), gen_putspecialobject);
     yjit_reg_op(BIN(getlocal), gen_getlocal);
     yjit_reg_op(BIN(getlocal_WC_0), gen_getlocal_wc0);
     yjit_reg_op(BIN(getlocal_WC_1), gen_getlocal_wc1);
@@ -3716,6 +3741,7 @@ yjit_init_codegen(void)
     yjit_reg_op(BIN(opt_not), gen_opt_not);
     yjit_reg_op(BIN(opt_size), gen_opt_size);
     yjit_reg_op(BIN(opt_length), gen_opt_length);
+    yjit_reg_op(BIN(opt_regexpmatch2), gen_opt_regexpmatch2);
     yjit_reg_op(BIN(opt_getinlinecache), gen_opt_getinlinecache);
     yjit_reg_op(BIN(opt_invokebuiltin_delegate), gen_opt_invokebuiltin_delegate);
     yjit_reg_op(BIN(opt_invokebuiltin_delegate_leave), gen_opt_invokebuiltin_delegate);
