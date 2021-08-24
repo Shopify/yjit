@@ -17,6 +17,8 @@ enum yjit_ir_opnd_type
     EIR_VALUE,      // Immediate Ruby value, may be GC'd, movable
     EIR_INSN_OUT,   // Output of a preceding instruction in this block
     EIR_CODE_PTR,   // Pointer to a piece of code (e.g. side-exit)
+    EIR_LABEL_NAME, // A label without an index in the output
+    EIR_LABEL_IDX,  // A label that has been indexed
 
     // Low-level operands, for lowering
     EIR_MEM,        // Memory location (num_bits, base_ptr, const_offset)
@@ -65,6 +67,9 @@ typedef struct yjit_ir_opnd_t
 
         // For branch targets
         uint8_t* code_ptr;
+
+        // For strings (names, comments, etc.)
+        char* str;
     } as;
 
     // Size in bits (8, 16, 32, 64)
@@ -88,6 +93,7 @@ STATIC_ASSERT(ir_opnd_size, sizeof(ir_opnd_t) <= 16);
 #define IR_REG(x86reg) ( (ir_opnd_t){ .num_bits = 64, .kind = EIR_REG, .as.reg.idx = x86reg.as.reg.reg_no } )
 
 ir_opnd_t ir_code_ptr(uint8_t* code_ptr);
+ir_opnd_t ir_const_ptr(void *ptr);
 ir_opnd_t ir_imm(int64_t val);
 ir_opnd_t ir_mem(uint8_t num_bits, ir_opnd_t base, int32_t disp);
 
@@ -103,7 +109,6 @@ enum yjit_ir_op
     // Arithmetic instructions
     OP_ADD,
     OP_SUB,
-    // OP_MUL,
     OP_AND,
     OP_NOT,
 
@@ -130,6 +135,7 @@ enum yjit_ir_op
     // TODO:
     //CALL_CFUNC (var-arg...)
     OP_RET,
+    OP_RETVAL,
 
     //COUNTER_INC (counter_name)
 
