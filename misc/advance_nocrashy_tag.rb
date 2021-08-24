@@ -56,7 +56,7 @@ def ghapi_post(api_uri, params, verb: :post)
     req.basic_auth ENV['NOCRASHY_USER'], ENV['NOCRASHY_TOKEN']
     req['Accept'] = "application/vnd.github.v3+json"
     req['Content-Type'] = "application/json"
-    req.set_form_data(params)
+    req.body = JSON.dump(params)
     result = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true) { |http| http.request(req) }
 
     unless result.is_a?(Net::HTTPSuccess)
@@ -139,7 +139,7 @@ end
 def update_nocrashy(current_sha, next_sha)
     if current_sha
         puts "Updating nocrashy tag from #{current_sha} to #{next_sha}..."
-        ghapi_post("/repos/Shopify/yjit/git/refs/tags/nocrashy", { "sha" => next_sha, "force" => "true" }, verb: :patch)
+        ghapi_post("/repos/Shopify/yjit/git/refs/tags/nocrashy", { "sha" => next_sha, "force" => true }, verb: :patch)
     else
         puts "Creating nocrashy tag for SHA #{next_sha}..."
         ghapi_post("/repos/Shopify/yjit/git/refs", { "ref" => "refs/tags/nocrashy", "sha" => next_sha }, verb: :post)
