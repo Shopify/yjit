@@ -9,6 +9,7 @@
 #include "internal/object.h"
 #include "internal/string.h"
 #include "internal/variable.h"
+#include "internal/re.h"
 #include "insns_info.inc"
 #include "yjit.h"
 #include "yjit_iface.h"
@@ -1439,82 +1440,85 @@ gen_get_ivar(jitstate_t *jit, ctx_t *ctx, const int max_chain_depth, VALUE compt
     struct rb_iv_index_tbl_entry *ent;
     struct st_table *iv_index_tbl = ROBJECT_IV_INDEX_TBL(comptime_receiver);
 
-    // Lookup index for the ivar the instruction loads
-    if (iv_index_tbl && rb_iv_index_tbl_lookup(iv_index_tbl, id, &ent)) {
-        uint32_t ivar_index = ent->index;
-
-        // Pop receiver if it's on the temp stack
-        if (!reg0_opnd.is_self) {
-            (void)ctx_stack_pop(ctx, 1);
-        }
-
-        // Compile time self is embedded and the ivar index lands within the object
-        if (RB_FL_TEST_RAW(comptime_receiver, ROBJECT_EMBED) && ivar_index < ROBJECT_EMBED_LEN_MAX) {
-            // See ROBJECT_IVPTR() from include/ruby/internal/core/robject.h
-
-            // Guard that self is embedded
-            // TODO: BT and JC is shorter
-            ADD_COMMENT(cb, "guard embedded getivar");
-            x86opnd_t flags_opnd = member_opnd(REG0, struct RBasic, flags);
-            test(cb, flags_opnd, imm_opnd(ROBJECT_EMBED));
-            jit_chain_guard(JCC_JZ, jit, &starting_context, max_chain_depth, side_exit);
-
-            // Load the variable
-            x86opnd_t ivar_opnd = mem_opnd(64, REG0, offsetof(struct RObject, as.ary) + ivar_index * SIZEOF_VALUE);
-            mov(cb, REG1, ivar_opnd);
-
-            // Guard that the variable is not Qundef
-            cmp(cb, REG1, imm_opnd(Qundef));
-            mov(cb, REG0, imm_opnd(Qnil));
-            cmove(cb, REG1, REG0);
-
-            // Push the ivar on the stack
-            x86opnd_t out_opnd = ctx_stack_push(ctx, TYPE_UNKNOWN);
-            mov(cb, out_opnd, REG1);
-        }
-        else {
-            // Compile time value is *not* embeded.
-
-            // Guard that value is *not* embedded
-            // See ROBJECT_IVPTR() from include/ruby/internal/core/robject.h
-            ADD_COMMENT(cb, "guard extended getivar");
-            x86opnd_t flags_opnd = member_opnd(REG0, struct RBasic, flags);
-            test(cb, flags_opnd, imm_opnd(ROBJECT_EMBED));
-            jit_chain_guard(JCC_JNZ, jit, &starting_context, max_chain_depth, side_exit);
-
-            // check that the extended table is big enough
-            if (ivar_index >= ROBJECT_EMBED_LEN_MAX + 1) {
-                // Check that the slot is inside the extended table (num_slots > index)
-                x86opnd_t num_slots = mem_opnd(32, REG0, offsetof(struct RObject, as.heap.numiv));
-                cmp(cb, num_slots, imm_opnd(ivar_index));
-                jle_ptr(cb, COUNTED_EXIT(side_exit, getivar_idx_out_of_range));
-            }
-
-            // Get a pointer to the extended table
-            x86opnd_t tbl_opnd = mem_opnd(64, REG0, offsetof(struct RObject, as.heap.ivptr));
-            mov(cb, REG0, tbl_opnd);
-
-            // Read the ivar from the extended table
-            x86opnd_t ivar_opnd = mem_opnd(64, REG0, sizeof(VALUE) * ivar_index);
-            mov(cb, REG0, ivar_opnd);
-
-            // Check that the ivar is not Qundef
-            cmp(cb, REG0, imm_opnd(Qundef));
-            mov(cb, REG1, imm_opnd(Qnil));
-            cmove(cb, REG0, REG1);
-
-            // Push the ivar on the stack
-            x86opnd_t out_opnd = ctx_stack_push(ctx, TYPE_UNKNOWN);
-            mov(cb, out_opnd, REG0);
-        }
-
-        // Jump to next instruction. This allows guard chains to share the same successor.
-        jit_jump_to_next_insn(jit, ctx);
-        return YJIT_END_BLOCK;
+    // Make sure there is a mapping for this ivar in the index table
+    if (!iv_index_tbl || !rb_iv_index_tbl_lookup(iv_index_tbl, id, &ent)) {
+        rb_ivar_set(comptime_receiver, id, Qundef);
+        iv_index_tbl = ROBJECT_IV_INDEX_TBL(comptime_receiver);
+        RUBY_ASSERT(iv_index_tbl);
+        // Redo the lookup
+        RUBY_ASSERT_ALWAYS(rb_iv_index_tbl_lookup(iv_index_tbl, id, &ent));
     }
 
-    GEN_COUNTER_INC(cb, getivar_name_not_mapped);
-    return YJIT_CANT_COMPILE;
+    uint32_t ivar_index = ent->index;
+
+    // Pop receiver if it's on the temp stack
+    if (!reg0_opnd.is_self) {
+        (void)ctx_stack_pop(ctx, 1);
+    }
+
+    // Compile time self is embedded and the ivar index lands within the object
+    if (RB_FL_TEST_RAW(comptime_receiver, ROBJECT_EMBED) && ivar_index < ROBJECT_EMBED_LEN_MAX) {
+        // See ROBJECT_IVPTR() from include/ruby/internal/core/robject.h
+
+        // Guard that self is embedded
+        // TODO: BT and JC is shorter
+        ADD_COMMENT(cb, "guard embedded getivar");
+        x86opnd_t flags_opnd = member_opnd(REG0, struct RBasic, flags);
+        test(cb, flags_opnd, imm_opnd(ROBJECT_EMBED));
+        jit_chain_guard(JCC_JZ, jit, &starting_context, max_chain_depth, side_exit);
+
+        // Load the variable
+        x86opnd_t ivar_opnd = mem_opnd(64, REG0, offsetof(struct RObject, as.ary) + ivar_index * SIZEOF_VALUE);
+        mov(cb, REG1, ivar_opnd);
+
+        // Guard that the variable is not Qundef
+        cmp(cb, REG1, imm_opnd(Qundef));
+        mov(cb, REG0, imm_opnd(Qnil));
+        cmove(cb, REG1, REG0);
+
+        // Push the ivar on the stack
+        x86opnd_t out_opnd = ctx_stack_push(ctx, TYPE_UNKNOWN);
+        mov(cb, out_opnd, REG1);
+    }
+    else {
+        // Compile time value is *not* embeded.
+
+        // Guard that value is *not* embedded
+        // See ROBJECT_IVPTR() from include/ruby/internal/core/robject.h
+        ADD_COMMENT(cb, "guard extended getivar");
+        x86opnd_t flags_opnd = member_opnd(REG0, struct RBasic, flags);
+        test(cb, flags_opnd, imm_opnd(ROBJECT_EMBED));
+        jit_chain_guard(JCC_JNZ, jit, &starting_context, max_chain_depth, side_exit);
+
+        // check that the extended table is big enough
+        if (ivar_index >= ROBJECT_EMBED_LEN_MAX + 1) {
+            // Check that the slot is inside the extended table (num_slots > index)
+            x86opnd_t num_slots = mem_opnd(32, REG0, offsetof(struct RObject, as.heap.numiv));
+            cmp(cb, num_slots, imm_opnd(ivar_index));
+            jle_ptr(cb, COUNTED_EXIT(side_exit, getivar_idx_out_of_range));
+        }
+
+        // Get a pointer to the extended table
+        x86opnd_t tbl_opnd = mem_opnd(64, REG0, offsetof(struct RObject, as.heap.ivptr));
+        mov(cb, REG0, tbl_opnd);
+
+        // Read the ivar from the extended table
+        x86opnd_t ivar_opnd = mem_opnd(64, REG0, sizeof(VALUE) * ivar_index);
+        mov(cb, REG0, ivar_opnd);
+
+        // Check that the ivar is not Qundef
+        cmp(cb, REG0, imm_opnd(Qundef));
+        mov(cb, REG1, imm_opnd(Qnil));
+        cmove(cb, REG0, REG1);
+
+        // Push the ivar on the stack
+        x86opnd_t out_opnd = ctx_stack_push(ctx, TYPE_UNKNOWN);
+        mov(cb, out_opnd, REG0);
+    }
+
+    // Jump to next instruction. This allows guard chains to share the same successor.
+    jit_jump_to_next_insn(jit, ctx);
+    return YJIT_END_BLOCK;
 }
 
 static codegen_status_t
@@ -3532,6 +3536,47 @@ gen_tostring(jitstate_t* jit, ctx_t* ctx)
 }
 
 static codegen_status_t
+gen_toregexp(jitstate_t* jit, ctx_t* ctx)
+{
+    rb_num_t opt = jit_get_arg(jit, 0);
+    rb_num_t cnt = jit_get_arg(jit, 1);
+
+    // Save the PC and SP because this allocates an object and could
+    // raise an exception.
+    jit_save_pc(jit, REG0);
+    jit_save_sp(jit, ctx);
+
+    x86opnd_t values_ptr = ctx_sp_opnd(ctx, -(sizeof(VALUE) * (uint32_t)cnt));
+    ctx_stack_pop(ctx, cnt);
+
+    mov(cb, C_ARG_REGS[0], imm_opnd(0));
+    mov(cb, C_ARG_REGS[1], imm_opnd(cnt));
+    lea(cb, C_ARG_REGS[2], values_ptr);
+    call_ptr(cb, REG0, (void *)&rb_ary_tmp_new_from_values);
+
+    // Save the array so we can clear it later
+    push(cb, RAX);
+    push(cb, RAX); // Alignment
+    mov(cb, C_ARG_REGS[0], RAX);
+    mov(cb, C_ARG_REGS[1], imm_opnd(opt));
+    call_ptr(cb, REG0, (void *)&rb_reg_new_ary);
+
+    // The actual regex is in RAX now.  Pop the temp array from
+    // rb_ary_tmp_new_from_values into C arg regs so we can clear it
+    pop(cb, REG1); // Alignment
+    pop(cb, C_ARG_REGS[0]);
+
+    // The value we want to push on the stack is in RAX right now
+    x86opnd_t stack_ret = ctx_stack_push(ctx, TYPE_UNKNOWN);
+    mov(cb, stack_ret, RAX);
+
+    // Clear the temp array.
+    call_ptr(cb, REG0, (void *)&rb_ary_clear);
+
+    return YJIT_KEEP_COMPILING;
+}
+
+static codegen_status_t
 gen_opt_getinlinecache(jitstate_t *jit, ctx_t *ctx)
 {
     VALUE jump_offset = jit_get_arg(jit, 0);
@@ -3769,6 +3814,7 @@ yjit_init_codegen(void)
     yjit_reg_op(BIN(getglobal), gen_getglobal);
     yjit_reg_op(BIN(setglobal), gen_setglobal);
     yjit_reg_op(BIN(tostring), gen_tostring);
+    yjit_reg_op(BIN(toregexp), gen_toregexp);
 
     yjit_method_codegen_table = st_init_numtable();
 
