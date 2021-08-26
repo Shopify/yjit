@@ -197,15 +197,6 @@ if repo_nocrashy == latest_nocrashy
     exit 0
 end
 
-# Let's make sure that the nocrashy tag seems to be moving forward appropriately
-commit_move_distance = `git rev-list --count #{repo_nocrashy}...#{latest_nocrashy}`.chomp.to_i
-
-if commit_move_distance == 0
-    puts "ARGH. Something has gone wrong. We're seeing some kind of nonlinear move. Maybe from a push -f?"
-    puts "You can fix this by moving the nocrashy tag to a sensible location manually."
-    exit -1
-end
-
 puts "Creating/updating nocrashy tag on the repo..."
 update_nocrashy(current_nocrashy, latest_nocrashy)
 puts "Tag updated. All's well."

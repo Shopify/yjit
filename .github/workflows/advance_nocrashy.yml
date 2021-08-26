@@ -2,7 +2,7 @@ name: Advance the "nocrashy" tag
 on:
   schedule:
     # Run twice daily at 5:47 and 11:47
-    - cron: '47 * * * *'
+    - cron: '47 5,11 * * *'
 
 jobs:
   checks:
