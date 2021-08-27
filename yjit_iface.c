@@ -48,9 +48,97 @@ extern st_table *rb_encoded_insn_data;
 
 struct rb_yjit_options rb_yjit_opts;
 
+static void
+yjit_block_mark(void * ptr)
+{
+    block_t * block = (block_t *)ptr;
+
+    // When the block is invalidated, it sets the `self` pointer to nil.
+    // Don't mark any edges if the block has been invalidated.
+    if (RTEST(block->self)) {
+        rb_gc_mark_movable(block->code_page);
+        rb_gc_mark_movable((VALUE)block->blockid.iseq);
+        rb_gc_mark_movable(block->receiver_klass);
+        rb_gc_mark_movable(block->callee_cme);
+
+        rb_darray_for(block->outgoing, branch_idx) {
+            branch_t* branch = rb_darray_get(block->outgoing, branch_idx);
+
+            for (size_t i = 0; i < 2; i++) {
+                block_t* succ = branch->blocks[i];
+
+                // Mark outgoing successors (if we have them)
+                if (succ) {
+                    rb_gc_mark_movable(succ->self);
+                }
+
+                // Mark ISEQs associated with any targets
+                rb_gc_mark_movable((VALUE)branch->targets[i].iseq);
+            }
+
+            // Walk over references to objects in generated code.
+            uint32_t *offset_element;
+            rb_darray_foreach(block->gc_object_offsets, offset_idx, offset_element) {
+                uint32_t offset_to_value = *offset_element;
+                uint8_t *value_address = cb_get_ptr(cb, offset_to_value);
+
+                VALUE object;
+                memcpy(&object, value_address, SIZEOF_VALUE);
+                rb_gc_mark_movable(object);
+            }
+        }
+    }
+}
+
+static void
+yjit_block_free(void * ptr)
+{
+    free(ptr);
+}
+
+static void
+yjit_block_update_references(void * ptr)
+{
+    block_t * block = (block_t *)ptr;
+
+    // If self has been cleared, the block has been invalidated, so don't
+    // bother to update references.
+    if (RTEST(block->self)) {
+        // Update the machine code page this block lives on
+        block->code_page = rb_gc_location(block->code_page);
+        block->self = rb_gc_location(block->self);
+        block->blockid.iseq = (const rb_iseq_t *)rb_gc_location((VALUE)block->blockid.iseq);
+        block->receiver_klass = rb_gc_location(block->receiver_klass);
+        block->callee_cme = rb_gc_location(block->callee_cme);
+
+        // Update outgoing branch entries
+        rb_darray_for(block->outgoing, branch_idx) {
+            branch_t* branch = rb_darray_get(block->outgoing, branch_idx);
+            for (int i = 0; i < 2; ++i) {
+                branch->targets[i].iseq = (const void *)rb_gc_location((VALUE)branch->targets[i].iseq);
+            }
+        }
+
+        // Walk over references to objects in generated code.
+        uint32_t *offset_element;
+        rb_darray_foreach(block->gc_object_offsets, offset_idx, offset_element) {
+            uint32_t offset_to_value = *offset_element;
+            uint8_t *value_address = cb_get_ptr(cb, offset_to_value);
+
+            VALUE object;
+            memcpy(&object, value_address, SIZEOF_VALUE);
+            VALUE possibly_moved = rb_gc_location(object);
+            // Only write when the VALUE moves, to be CoW friendly.
+            if (possibly_moved != object) {
+                memcpy(value_address, &possibly_moved, SIZEOF_VALUE);
+            }
+        }
+    }
+}
+
 static const rb_data_type_t yjit_block_type = {
     "YJIT/Block",
-    {0, 0, 0, },
+    {yjit_block_mark, yjit_block_free, 0, yjit_block_update_references},
     0, 0, RUBY_TYPED_FREE_IMMEDIATELY
 };
 
@@ -495,10 +583,39 @@ rb_yjit_compile_iseq(const rb_iseq_t *iseq, rb_execution_context_t *ec)
 #endif
 }
 
-struct yjit_block_itr {
-    const rb_iseq_t *iseq;
-    VALUE list;
-};
+/* Wrap a `block_t` object with a Ruby object and return the Ruby object */
+VALUE
+yjit_wrap_block(block_t * block)
+{
+    return TypedData_Wrap_Struct(cYjitBlock, &yjit_block_type, block);
+}
+
+/* Get a list of the YJIT blocks associated with `rb_iseq` */
+static VALUE
+yjit_entry_blocks_for(VALUE mod, VALUE rb_iseq)
+{
+    if (CLASS_OF(rb_iseq) != rb_cISeq) {
+        return rb_ary_new();
+    }
+
+    const rb_iseq_t *iseq = rb_iseqw_to_iseq(rb_iseq);
+
+    VALUE roots = rb_ary_new();
+
+    if (rb_darray_size(iseq->body->yjit_blocks) > 0) {
+        rb_yjit_block_array_t versions = rb_darray_get(iseq->body->yjit_blocks, 0);
+
+        rb_darray_for(versions, block_idx) {
+            block_t *block = rb_darray_get(versions, block_idx);
+
+            if (block->blockid.idx == 0) {
+                rb_ary_push(roots, block->self);
+            }
+        }
+    }
+
+    return roots;
+}
 
 /* Get a list of the YJIT blocks associated with `rb_iseq` */
 static VALUE
@@ -845,7 +962,9 @@ rb_yjit_count_side_exit_op(const VALUE *exit_pc)
 }
 #endif
 
-void
+// This function marks *all* blocks associated with the iseq.  We need to
+// delete this after we can mark blocks that are on the stack.
+static void
 rb_yjit_iseq_mark(const struct rb_iseq_constant_body *body)
 {
     rb_darray_for(body->yjit_blocks, version_array_idx) {
@@ -854,74 +973,27 @@ rb_yjit_iseq_mark(const struct rb_iseq_constant_body *body)
         rb_darray_for(version_array, block_idx) {
             block_t *block = rb_darray_get(version_array, block_idx);
 
-            rb_gc_mark_movable((VALUE)block->blockid.iseq);
-            rb_gc_mark_movable(block->receiver_klass);
-            rb_gc_mark_movable(block->callee_cme);
-
-            // Mark outgoing branch entries
-            rb_darray_for(block->outgoing, branch_idx) {
-                branch_t* branch = rb_darray_get(block->outgoing, branch_idx);
-                for (int i = 0; i < 2; ++i) {
-                    rb_gc_mark_movable((VALUE)branch->targets[i].iseq);
-                }
-            }
-
-            // Walk over references to objects in generated code.
-            uint32_t *offset_element;
-            rb_darray_foreach(block->gc_object_offsets, offset_idx, offset_element) {
-                uint32_t offset_to_value = *offset_element;
-                uint8_t *value_address = cb_get_ptr(cb, offset_to_value);
-
-                VALUE object;
-                memcpy(&object, value_address, SIZEOF_VALUE);
-                rb_gc_mark_movable(object);
-            }
-
-            // Mark the machine code page this block lives on
-            rb_gc_mark_movable(block->code_page);
+            // Mark all associated blocks
+            rb_gc_mark_movable((VALUE)block->self);
         }
     }
 }
 
+/* Mark all entry blocks associated with this iseq */
 void
-rb_yjit_iseq_update_references(const struct rb_iseq_constant_body *body)
+rb_yjit_mark_iseq_entry_blocks(const rb_iseq_t *iseq)
 {
-    rb_darray_for(body->yjit_blocks, version_array_idx) {
-        rb_yjit_block_array_t version_array = rb_darray_get(body->yjit_blocks, version_array_idx);
+    rb_yjit_iseq_mark(iseq->body);
 
-        rb_darray_for(version_array, block_idx) {
-            block_t *block = rb_darray_get(version_array, block_idx);
+    if (rb_darray_size(iseq->body->yjit_blocks) > 0) {
+        rb_yjit_block_array_t versions = rb_darray_get(iseq->body->yjit_blocks, 0);
 
-            block->blockid.iseq = (const rb_iseq_t *)rb_gc_location((VALUE)block->blockid.iseq);
+        rb_darray_for(versions, block_idx) {
+            block_t *block = rb_darray_get(versions, block_idx);
+            RUBY_ASSERT(block->blockid.idx == 0);
 
-            block->receiver_klass = rb_gc_location(block->receiver_klass);
-            block->callee_cme = rb_gc_location(block->callee_cme);
-
-            // Update outgoing branch entries
-            rb_darray_for(block->outgoing, branch_idx) {
-                branch_t* branch = rb_darray_get(block->outgoing, branch_idx);
-                for (int i = 0; i < 2; ++i) {
-                    branch->targets[i].iseq = (const void *)rb_gc_location((VALUE)branch->targets[i].iseq);
-                }
-            }
-
-            // Walk over references to objects in generated code.
-            uint32_t *offset_element;
-            rb_darray_foreach(block->gc_object_offsets, offset_idx, offset_element) {
-                uint32_t offset_to_value = *offset_element;
-                uint8_t *value_address = cb_get_ptr(cb, offset_to_value);
-
-                VALUE object;
-                memcpy(&object, value_address, SIZEOF_VALUE);
-                VALUE possibly_moved = rb_gc_location(object);
-                // Only write when the VALUE moves, to be CoW friendly.
-                if (possibly_moved != object) {
-                    memcpy(value_address, &possibly_moved, SIZEOF_VALUE);
-                }
-            }
-
-            // Update the machine code page this block lives on
-            block->code_page = rb_gc_location(block->code_page);
+            // Mark the block wrapper
+            rb_gc_mark_movable(block->self);
         }
     }
 }
@@ -932,11 +1004,6 @@ rb_yjit_iseq_free(const struct rb_iseq_constant_body *body)
 {
     rb_darray_for(body->yjit_blocks, version_array_idx) {
         rb_yjit_block_array_t version_array = rb_darray_get(body->yjit_blocks, version_array_idx);
-
-        rb_darray_for(version_array, block_idx) {
-            block_t *block = rb_darray_get(version_array, block_idx);
-            yjit_free_block(block);
-        }
 
         rb_darray_free(version_array);
     }
@@ -1004,18 +1071,18 @@ block_id(VALUE self)
 }
 
 /**
- *  call-seq: block.outgoing_ids -> list
+ *  call-seq: block.outgoing -> list
  *
- *  Returns a list of outgoing ids for the current block.  This list can be used
- *  in conjunction with Block#id to construct a graph of block objects.
+ *  Returns a list of outgoing blocks for the current block.  This list can be
+ *  used in conjunction with Block#id to construct a graph of block objects.
  */
 static VALUE
-outgoing_ids(VALUE self)
+outgoing(VALUE self)
 {
     block_t * block;
     TypedData_Get_Struct(self, block_t, &yjit_block_type, block);
 
-    VALUE ids = rb_ary_new();
+    VALUE outgoing_blocks = rb_ary_new();
 
     rb_darray_for(block->outgoing, branch_idx) {
         branch_t* out_branch = rb_darray_get(block->outgoing, branch_idx);
@@ -1026,12 +1093,11 @@ outgoing_ids(VALUE self)
             if (succ == NULL)
                 continue;
 
-            rb_ary_push(ids, PTR2NUM(succ));
+            rb_ary_push(outgoing_blocks, succ->self);
         }
-
     }
 
-    return ids;
+    return outgoing_blocks;
 }
 
 // Can raise RuntimeError
@@ -1074,6 +1140,7 @@ rb_yjit_init(struct rb_yjit_options *options)
     // YJIT Ruby module
     mYjit = rb_define_module("YJIT");
     rb_define_module_function(mYjit, "blocks_for", yjit_blocks_for, 1);
+    rb_define_module_function(mYjit, "entry_blocks_for", yjit_entry_blocks_for, 1);
 
     // YJIT::Block (block version, code block)
     cYjitBlock = rb_define_class_under(mYjit, "Block", rb_cObject);
@@ -1082,7 +1149,7 @@ rb_yjit_init(struct rb_yjit_options *options)
     rb_define_method(cYjitBlock, "code", block_code, 0);
     rb_define_method(cYjitBlock, "iseq_start_index", iseq_start_index, 0);
     rb_define_method(cYjitBlock, "iseq_end_index", iseq_end_index, 0);
-    rb_define_method(cYjitBlock, "outgoing_ids", outgoing_ids, 0);
+    rb_define_method(cYjitBlock, "outgoing", outgoing, 0);
 
     // YJIT disassembler interface
 #ifdef HAVE_LIBCAPSTONE

@@ -640,7 +640,12 @@ block_t* gen_block_version(blockid_t blockid, const ctx_t* start_ctx, rb_executi
     // Allocate a new block version object
     block_t* block = calloc(1, sizeof(block_t));
     block->blockid = blockid;
+    block->self = yjit_wrap_block(block);
+
+    RB_OBJ_WRITTEN(block->blockid.iseq, Qundef, block->self);
+    block->code_page = Qnil;
     memcpy(&block->ctx, start_ctx, sizeof(ctx_t));
+
 
     // Store a pointer to the first block (returned by this function)
     block_t* first_block = block;
@@ -676,7 +681,10 @@ block_t* gen_block_version(blockid_t blockid, const ctx_t* start_ctx, rb_executi
         // Allocate a new block version object
         // Use the context from the branch
         block = calloc(1, sizeof(block_t));
+        block->self = yjit_wrap_block(block);
+        block->code_page = Qnil;
         block->blockid = last_branch->targets[0];
+        RB_OBJ_WRITTEN(block->blockid.iseq, Qundef, block->self);
         block->ctx = last_branch->target_ctxs[0];
         //memcpy(&block->ctx, ctx, sizeof(ctx_t));
 
@@ -1030,7 +1038,9 @@ yjit_free_block(block_t *block)
     rb_darray_free(block->outgoing);
     rb_darray_free(block->gc_object_offsets);
 
-    free(block);
+    // Set the wrapper object reference to Qnil so that the mark / compact
+    // functions know that the block has been invalidated
+    block->self = Qnil;
 }
 
 // Remove a block version

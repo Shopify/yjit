@@ -122,5 +122,6 @@ const VALUE *rb_yjit_count_side_exit_op(const VALUE *exit_pc);
 
 void yjit_unlink_method_lookup_dependency(block_t *block);
 void yjit_block_assumptions_free(block_t *block);
+VALUE yjit_wrap_block(block_t * block);
 
 #endif // #ifndef YJIT_IFACE_H

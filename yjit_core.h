@@ -251,6 +251,9 @@ typedef struct yjit_block_version
     // Code page this block lives on
     VALUE code_page;
 
+    // Wrapper object
+    VALUE self;
+
     // Index one past the last instruction in the iseq
     uint32_t end_idx;
 

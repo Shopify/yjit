@@ -71,11 +71,11 @@ bool rb_yjit_compile_iseq(const rb_iseq_t *iseq, rb_execution_context_t *ec);
 void rb_yjit_init(struct rb_yjit_options *options);
 void rb_yjit_bop_redefined(VALUE klass, const rb_method_entry_t *me, enum ruby_basic_operators bop);
 void rb_yjit_constant_state_changed(void);
-void rb_yjit_iseq_mark(const struct rb_iseq_constant_body *body);
 void rb_yjit_iseq_update_references(const struct rb_iseq_constant_body *body);
 void rb_yjit_iseq_free(const struct rb_iseq_constant_body *body);
 void rb_yjit_before_ractor_spawn(void);
 void yjit_constant_ic_update(const rb_iseq_t *iseq, IC ic);
 void yjit_tracing_invalidate_all(void);
+void rb_yjit_mark_iseq_entry_blocks(const rb_iseq_t *iseq);
 
 #endif // #ifndef YJIT_H

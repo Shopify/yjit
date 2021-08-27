@@ -323,7 +323,6 @@ rb_iseq_update_references(rb_iseq_t *iseq)
 #if USE_MJIT
         mjit_update_references(iseq);
 #endif
-        rb_yjit_iseq_update_references(body);
     }
 }
 
@@ -404,7 +403,7 @@ rb_iseq_mark(const rb_iseq_t *iseq)
 #if USE_MJIT
         mjit_mark_cc_entries(body);
 #endif
-        rb_yjit_iseq_mark(body);
+        rb_yjit_mark_iseq_entry_blocks(iseq);
     }
 
     if (FL_TEST_RAW((VALUE)iseq, ISEQ_NOT_LOADED_YET)) {

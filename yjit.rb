@@ -1,4 +1,14 @@
 module YJIT
+  class Block
+    # call-seq: block.outgoing_ids -> list
+    #
+    # Returns a list of outgoing ids for the current block.  This list can be used
+    # in conjunction with Block#id to construct a graph of block objects.
+    def outgoing_ids
+      outgoing.map(&:id)
+    end
+  end
+
   if defined?(Disasm)
     def self.disasm(iseq, tty: $stdout && $stdout.tty?)
       iseq = RubyVM::InstructionSequence.of(iseq)
