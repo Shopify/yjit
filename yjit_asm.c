@@ -1766,8 +1766,34 @@ void xor(codeblock_t* cb, x86opnd_t opnd0, x86opnd_t opnd1)
     );
 }
 
-// LOCK - lock prefix for atomic shared memory operations
+/// LOCK - lock prefix for atomic shared memory operations
 void cb_write_lock_prefix(codeblock_t* cb)
 {
     cb_write_byte(cb, 0xF0);
+}
+
+/// RIP relative LEA to put the address of a label into a register
+void cb_load_label_address(codeblock_t* cb, x86opnd_t reg, uint32_t label_idx)
+{
+    assert(reg.num_bits == 64);
+    assert(reg.type == OPND_REG);
+
+    uint8_t reg_no = reg.as.reg.reg_no;
+
+    assert(reg_no < 16);
+
+    // 64 bit LEA wants REX.W
+    cb_write_rex(cb, true, reg_no, 0, 0);
+    // opcode
+    cb_write_byte(cb, 0x8D);
+    // MODRM.mod = 0b00  from the manual
+    // MODRM.reg = given register
+    // MODRM.rm  = 0b101 from the manual
+    cb_write_byte(cb, 0x5 + ((reg_no & 7) << 3));
+
+    // Add a reference to the label
+    cb_label_ref(cb, label_idx);
+
+    // Relative 32-bit offset to be patched
+    cb_write_int(cb, 0, 32);
 }

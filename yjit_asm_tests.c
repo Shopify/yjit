@@ -116,6 +116,43 @@ void run_assembler_tests()
     // cqo
     cb_set_pos(cb, 0); cqo(cb); check_bytes(cb, "4899");
 
+
+    // load label address
+    {
+        uint32_t label;
+        uint32_t pos_after_lea;
+
+        cb_set_pos(cb, 0);
+        label = cb_new_label(cb, "foo");
+        cb_load_label_address(cb, RAX, label);
+        pos_after_lea = cb->write_pos;
+        nop(cb, 42);
+        cb_write_label(cb, label);
+        cb_link_labels(cb);
+        cb_set_pos(cb, pos_after_lea);
+        check_bytes(cb, "488D052A000000");
+
+        cb_set_pos(cb, 0);
+        label = cb_new_label(cb, "foo");
+        cb_load_label_address(cb, RDI, label);
+        pos_after_lea = cb->write_pos;
+        nop(cb, 9);
+        cb_write_label(cb, label);
+        cb_link_labels(cb);
+        cb_set_pos(cb, pos_after_lea);
+        check_bytes(cb, "488D3D09000000");
+
+        cb_set_pos(cb, 0);
+        label = cb_new_label(cb, "foo");
+        cb_load_label_address(cb, R15, label);
+        pos_after_lea = cb->write_pos;
+        nop(cb, 9);
+        cb_write_label(cb, label);
+        cb_link_labels(cb);
+        cb_set_pos(cb, pos_after_lea);
+        check_bytes(cb, "4C8D3D09000000");
+    }
+
     // div
     /*
     test(
