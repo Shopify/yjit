@@ -4168,14 +4168,13 @@ gen_getblockparamproxy(jitstate_t* jit, ctx_t* ctx, codeblock_t* cb)
 
     // Load the block handler for the current frame
     // note, VM_ASSERT(VM_ENV_LOCAL_P(ep))
-    mov(cb, REG0, mem_opnd(64, REG0, SIZEOF_VALUE * VM_ENV_DATA_INDEX_SPECVAL));
+    x86opnd_t bh_opnd = mem_opnd(64, REG0, SIZEOF_VALUE * VM_ENV_DATA_INDEX_SPECVAL);
 
-    // Block handler is a tagged pointer. Look at the tag. 0x03 is from VM_BH_ISEQ_BLOCK_P().
-    and(cb, REG0_8, imm_opnd(0x3));
-
-    // Bail unless VM_BH_ISEQ_BLOCK_P(bh). This also checks for null.
-    cmp(cb, REG0_8, imm_opnd(0x1));
-    jne_ptr(cb, side_exit);
+    // Bail unless either VM_BH_ISEQ_BLOCK_P(bh) or VM_BH_IFUNC_P(bh)
+    // (bh & 3) == 1 || (bh & 3) == 3
+    // This also checks for null.
+    test(cb, bh_opnd, imm_opnd(0x1));
+    jz_ptr(cb, side_exit);
 
     // Push rb_block_param_proxy. It's a root, so no need to use jit_mov_gc_ptr.
     mov(cb, REG0, const_ptr_opnd((void *)rb_block_param_proxy));
