@@ -30,6 +30,7 @@
 #include "ruby/debug.h"
 #include "vm_core.h"
 #include "ruby/ractor.h"
+#include "yjit.h"
 
 #include "builtin.h"
 
@@ -95,6 +96,13 @@ update_global_event_hook(rb_event_flag_t vm_events)
     ruby_vm_event_flags = vm_events;
     ruby_vm_event_enabled_global_flags |= vm_events;
     rb_objspace_set_event_hook(vm_events);
+
+    if (vm_events & RUBY_EVENT_TRACEPOINT_ALL) {
+        // Invalidate all code if listening for any TracePoint event.
+        // Internal events fire inside C routines so don't need special handling.
+        // Do this last so other ractors see updated vm events when they wake up.
+        yjit_tracing_invalidate_all();
+    }
 }
 
 /* add/remove hooks */
@@ -1207,6 +1215,8 @@ rb_tracepoint_enable_for_target(VALUE tpval, VALUE target, VALUE target_line)
     if (n == 0) {
         rb_raise(rb_eArgError, "can not enable any hooks");
     }
+
+    yjit_tracing_invalidate_all();
 
     ruby_vm_event_local_num++;
 
