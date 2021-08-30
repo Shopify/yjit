@@ -965,23 +965,28 @@ RUBY_H_INCLUDES    = {$(VPATH)}ruby.h {$(VPATH)}config.h {$(VPATH)}defines.h \
 
 acosh.$(OBJEXT): {$(VPATH)}acosh.c
 alloca.$(OBJEXT): {$(VPATH)}alloca.c {$(VPATH)}config.h
+cbrt.$(OBJEXT): {$(VPATH)}cbrt.c
+close.$(OBJEXT): {$(VPATH)}close.c
 crypt.$(OBJEXT): {$(VPATH)}crypt.c {$(VPATH)}crypt.h {$(VPATH)}missing/des_tables.c
-dup2.$(OBJEXT): {$(VPATH)}dup2.c
 erf.$(OBJEXT): {$(VPATH)}erf.c
 explicit_bzero.$(OBJEXT): {$(VPATH)}explicit_bzero.c
-finite.$(OBJEXT): {$(VPATH)}finite.c
+ffs.$(OBJEXT): {$(VPATH)}ffs.c
 flock.$(OBJEXT): {$(VPATH)}flock.c
+hypot.$(OBJEXT): {$(VPATH)}hypot.c
+langinfo.$(OBJEXT): {$(VPATH)}langinfo.c
+lgamma_r.$(OBJEXT): {$(VPATH)}lgamma_r.c
 memcmp.$(OBJEXT): {$(VPATH)}memcmp.c
 memmove.$(OBJEXT): {$(VPATH)}memmove.c
-mkdir.$(OBJEXT): {$(VPATH)}mkdir.c
+nan.$(OBJEXT): {$(VPATH)}nan.c
+nextafter.$(OBJEXT): {$(VPATH)}nextafter.c
+procstat_vm.$(OBJEXT): {$(VPATH)}procstat_vm.c
 setproctitle.$(OBJEXT): {$(VPATH)}setproctitle.c
 strchr.$(OBJEXT): {$(VPATH)}strchr.c
-strdup.$(OBJEXT): {$(VPATH)}strdup.c
 strerror.$(OBJEXT): {$(VPATH)}strerror.c
 strlcat.$(OBJEXT): {$(VPATH)}strlcat.c
 strlcpy.$(OBJEXT): {$(VPATH)}strlcpy.c
 strstr.$(OBJEXT): {$(VPATH)}strstr.c
-nt.$(OBJEXT): {$(VPATH)}nt.c
+tgamma.$(OBJEXT): {$(VPATH)}tgamma.c
 
 .coroutine_obj $(COROUTINE_OBJ): \
 	{$(VPATH)}$(COROUTINE_SRC) \
@@ -1379,7 +1384,7 @@ no-test-bundled-gems-prepare: no-test-bundled-gems-precheck
 yes-test-bundled-gems-prepare: yes-test-bundled-gems-precheck
 	$(ACTIONS_GROUP)
 	$(XRUBY) -C "$(srcdir)" bin/gem install --no-document \
-		--install-dir .bundle --conservative "bundler" "minitest:~> 5" "test-unit" "rake" "hoe" "yard" "pry" "packnga" "rexml" "json-schema" "rbs"
+		--install-dir .bundle --conservative "bundler" "minitest:~> 5" "test-unit" "rake" "hoe" "yard" "pry" "packnga" "rexml" "json-schema"
 	$(ACTIONS_ENDGROUP)
 
 PREPARE_BUNDLED_GEMS = test-bundled-gems-prepare
@@ -2119,7 +2124,6 @@ bignum.$(OBJEXT): $(top_srcdir)/internal/object.h
 bignum.$(OBJEXT): $(top_srcdir)/internal/sanitizers.h
 bignum.$(OBJEXT): $(top_srcdir)/internal/serial.h
 bignum.$(OBJEXT): $(top_srcdir)/internal/static_assert.h
-bignum.$(OBJEXT): $(top_srcdir)/internal/util.h
 bignum.$(OBJEXT): $(top_srcdir)/internal/variable.h
 bignum.$(OBJEXT): $(top_srcdir)/internal/vm.h
 bignum.$(OBJEXT): $(top_srcdir)/internal/warnings.h
@@ -3450,7 +3454,6 @@ debug.$(OBJEXT): $(top_srcdir)/internal/imemo.h
 debug.$(OBJEXT): $(top_srcdir)/internal/serial.h
 debug.$(OBJEXT): $(top_srcdir)/internal/signal.h
 debug.$(OBJEXT): $(top_srcdir)/internal/static_assert.h
-debug.$(OBJEXT): $(top_srcdir)/internal/util.h
 debug.$(OBJEXT): $(top_srcdir)/internal/vm.h
 debug.$(OBJEXT): $(top_srcdir)/internal/warnings.h
 debug.$(OBJEXT): {$(VPATH)}assert.h
@@ -8090,7 +8093,6 @@ math.$(OBJEXT): {$(VPATH)}st.h
 math.$(OBJEXT): {$(VPATH)}subst.h
 memory_view.$(OBJEXT): $(hdrdir)/ruby/ruby.h
 memory_view.$(OBJEXT): $(top_srcdir)/internal/hash.h
-memory_view.$(OBJEXT): $(top_srcdir)/internal/util.h
 memory_view.$(OBJEXT): $(top_srcdir)/internal/variable.h
 memory_view.$(OBJEXT): {$(VPATH)}assert.h
 memory_view.$(OBJEXT): {$(VPATH)}backward/2/assume.h
@@ -8254,6 +8256,7 @@ memory_view.$(OBJEXT): {$(VPATH)}missing.h
 memory_view.$(OBJEXT): {$(VPATH)}node.h
 memory_view.$(OBJEXT): {$(VPATH)}st.h
 memory_view.$(OBJEXT): {$(VPATH)}subst.h
+memory_view.$(OBJEXT): {$(VPATH)}util.h
 memory_view.$(OBJEXT): {$(VPATH)}vm_debug.h
 memory_view.$(OBJEXT): {$(VPATH)}vm_sync.h
 miniinit.$(OBJEXT): $(CCAN_DIR)/check_type/check_type.h
@@ -9505,7 +9508,6 @@ pack.$(OBJEXT): $(top_srcdir)/internal/compilers.h
 pack.$(OBJEXT): $(top_srcdir)/internal/static_assert.h
 pack.$(OBJEXT): $(top_srcdir)/internal/string.h
 pack.$(OBJEXT): $(top_srcdir)/internal/symbol.h
-pack.$(OBJEXT): $(top_srcdir)/internal/util.h
 pack.$(OBJEXT): $(top_srcdir)/internal/variable.h
 pack.$(OBJEXT): $(top_srcdir)/internal/warnings.h
 pack.$(OBJEXT): {$(VPATH)}assert.h
@@ -9672,6 +9674,7 @@ pack.$(OBJEXT): {$(VPATH)}pack.c
 pack.$(OBJEXT): {$(VPATH)}pack.rbinc
 pack.$(OBJEXT): {$(VPATH)}st.h
 pack.$(OBJEXT): {$(VPATH)}subst.h
+pack.$(OBJEXT): {$(VPATH)}util.h
 parse.$(OBJEXT): $(hdrdir)/ruby.h
 parse.$(OBJEXT): $(hdrdir)/ruby/ruby.h
 parse.$(OBJEXT): $(top_srcdir)/internal/array.h
@@ -9695,7 +9698,6 @@ parse.$(OBJEXT): $(top_srcdir)/internal/static_assert.h
 parse.$(OBJEXT): $(top_srcdir)/internal/string.h
 parse.$(OBJEXT): $(top_srcdir)/internal/symbol.h
 parse.$(OBJEXT): $(top_srcdir)/internal/thread.h
-parse.$(OBJEXT): $(top_srcdir)/internal/util.h
 parse.$(OBJEXT): $(top_srcdir)/internal/variable.h
 parse.$(OBJEXT): $(top_srcdir)/internal/vm.h
 parse.$(OBJEXT): $(top_srcdir)/internal/warnings.h
@@ -12995,7 +12997,6 @@ sprintf.$(OBJEXT): $(top_srcdir)/internal/serial.h
 sprintf.$(OBJEXT): $(top_srcdir)/internal/static_assert.h
 sprintf.$(OBJEXT): $(top_srcdir)/internal/string.h
 sprintf.$(OBJEXT): $(top_srcdir)/internal/symbol.h
-sprintf.$(OBJEXT): $(top_srcdir)/internal/util.h
 sprintf.$(OBJEXT): $(top_srcdir)/internal/vm.h
 sprintf.$(OBJEXT): $(top_srcdir)/internal/warnings.h
 sprintf.$(OBJEXT): {$(VPATH)}assert.h
@@ -13163,6 +13164,7 @@ sprintf.$(OBJEXT): {$(VPATH)}regex.h
 sprintf.$(OBJEXT): {$(VPATH)}sprintf.c
 sprintf.$(OBJEXT): {$(VPATH)}st.h
 sprintf.$(OBJEXT): {$(VPATH)}subst.h
+sprintf.$(OBJEXT): {$(VPATH)}util.h
 sprintf.$(OBJEXT): {$(VPATH)}vsnprintf.c
 st.$(OBJEXT): $(hdrdir)/ruby.h
 st.$(OBJEXT): $(hdrdir)/ruby/ruby.h
@@ -13335,7 +13337,6 @@ strftime.$(OBJEXT): $(top_srcdir)/internal/compilers.h
 strftime.$(OBJEXT): $(top_srcdir)/internal/serial.h
 strftime.$(OBJEXT): $(top_srcdir)/internal/static_assert.h
 strftime.$(OBJEXT): $(top_srcdir)/internal/string.h
-strftime.$(OBJEXT): $(top_srcdir)/internal/util.h
 strftime.$(OBJEXT): $(top_srcdir)/internal/vm.h
 strftime.$(OBJEXT): {$(VPATH)}assert.h
 strftime.$(OBJEXT): {$(VPATH)}backward/2/assume.h
@@ -13498,6 +13499,7 @@ strftime.$(OBJEXT): {$(VPATH)}st.h
 strftime.$(OBJEXT): {$(VPATH)}strftime.c
 strftime.$(OBJEXT): {$(VPATH)}subst.h
 strftime.$(OBJEXT): {$(VPATH)}timev.h
+strftime.$(OBJEXT): {$(VPATH)}util.h
 string.$(OBJEXT): $(hdrdir)/ruby.h
 string.$(OBJEXT): $(hdrdir)/ruby/ruby.h
 string.$(OBJEXT): $(top_srcdir)/internal/array.h

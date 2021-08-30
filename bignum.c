@@ -36,7 +36,6 @@
 #include "internal/numeric.h"
 #include "internal/object.h"
 #include "internal/sanitizers.h"
-#include "internal/util.h"
 #include "internal/variable.h"
 #include "internal/warnings.h"
 #include "ruby/thread.h"
@@ -5383,7 +5382,7 @@ rb_integer_float_eq(VALUE x, VALUE y)
     double yd = RFLOAT_VALUE(y);
     double yi, yf;
 
-    if (isnan(yd) || isinf(yd))
+    if (!isfinite(yd))
         return Qfalse;
     yf = modf(yd, &yi);
     if (yf != 0)

@@ -37,6 +37,7 @@ class Reline::ANSI
       # default bindings
       [27, 32] => :em_set_mark,             # M-<space>
       [24, 24] => :em_exchange_mark,        # C-x C-x
+      [27, 91, 90] => :completion_journey_up, # S-Tab
     }.each_pair do |key, func|
       config.add_default_key_binding_by_keymap(:emacs, key, func)
     end
@@ -271,6 +272,22 @@ class Reline::ANSI
       @@output.write "\e[#{x}B" if x > 0
     elsif x < 0
       move_cursor_up(-x)
+    end
+  end
+
+  def self.hide_cursor
+    if Reline::Terminfo.enabled?
+      @@output.write Reline::Terminfo.tigetstr('civis')
+    else
+      # ignored
+    end
+  end
+
+  def self.show_cursor
+    if Reline::Terminfo.enabled?
+      @@output.write Reline::Terminfo.tigetstr('cnorm')
+    else
+      # ignored
     end
   end
 

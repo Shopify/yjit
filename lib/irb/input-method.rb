@@ -14,6 +14,7 @@ require_relative 'magic-file'
 require_relative 'completion'
 require 'io/console'
 require 'reline'
+require 'rdoc'
 
 module IRB
   STDIN_FILE_NAME = "(line)" # :nodoc:
@@ -294,6 +295,10 @@ module IRB
           end
         end
       Reline.dig_perfect_match_proc = IRB::InputCompletor::PerfectMatchedProc
+      Reline.autocompletion = IRB.conf[:USE_AUTOCOMPLETE]
+      if IRB.conf[:USE_AUTOCOMPLETE]
+        Reline.add_dialog_proc(:show_doc, SHOW_DOC_DIALOG, Reline::DEFAULT_DIALOG_CONTEXT)
+      end
     end
 
     def check_termination(&block)
@@ -307,6 +312,55 @@ module IRB
     def auto_indent(&block)
       @auto_indent_proc = block
     end
+
+    SHOW_DOC_DIALOG = ->() {
+      begin
+        require 'rdoc'
+      rescue LoadError
+        return nil
+      end
+      if just_cursor_moving and completion_journey_data.nil?
+        return nil
+      end
+      cursor_pos_to_render, result, pointer = context.pop(3)
+      return nil if result.nil? or pointer.nil?
+      name = result[pointer]
+      name = IRB::InputCompletor.retrieve_completion_data(name, doc_namespace: true)
+
+      driver = RDoc::RI::Driver.new
+      begin
+        name = driver.expand_name(name)
+      rescue RDoc::RI::Driver::NotFoundError
+        return nil
+      rescue
+        return nil # unknown error
+      end
+      doc = nil
+      used_for_class = false
+      if not name =~ /#|\./
+        found, klasses, includes, extends = driver.classes_and_includes_and_extends_for(name)
+        if not found.empty?
+          doc = driver.class_document(name, found, klasses, includes, extends)
+          used_for_class = true
+        end
+      end
+      unless used_for_class
+        doc = RDoc::Markup::Document.new
+        begin
+          driver.add_method(doc, name)
+        rescue RDoc::RI::Driver::NotFoundError
+          doc = nil
+        rescue
+          return nil # unknown error
+        end
+      end
+      return nil if doc.nil?
+      formatter = RDoc::Markup::ToAnsi.new
+      formatter.width = 40
+      str = doc.accept(formatter)
+
+      [Reline::CursorPos.new(cursor_pos_to_render.x + 40, cursor_pos_to_render.y + pointer), str.split("\n"), nil, '49']
+    }
 
     # Reads the next line from this input method.
     #
