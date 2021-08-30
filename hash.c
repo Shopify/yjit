@@ -1503,11 +1503,16 @@ rb_hash_foreach(VALUE hash, rb_foreach_func *func, VALUE farg)
 
     if (RHASH_TABLE_EMPTY_P(hash))
         return;
-    hash_iter_lev_inc(hash);
     arg.hash = hash;
     arg.func = (rb_foreach_func *)func;
     arg.arg  = farg;
-    rb_ensure(hash_foreach_call, (VALUE)&arg, hash_foreach_ensure, hash);
+    if (RB_OBJ_FROZEN(hash)) {
+        hash_foreach_call((VALUE)&arg);
+    }
+    else {
+        hash_iter_lev_inc(hash);
+        rb_ensure(hash_foreach_call, (VALUE)&arg, hash_foreach_ensure, hash);
+    }
     hash_verify(hash);
 }
 
@@ -2946,25 +2951,17 @@ rb_hash_replace(VALUE hash, VALUE hash2)
     COPY_DEFAULT(hash, hash2);
 
     if (RHASH_AR_TABLE_P(hash)) {
-        if (RHASH_AR_TABLE_P(hash2)) {
-            ar_clear(hash);
-        }
-        else {
-            ar_free_and_clear_table(hash);
-            RHASH_ST_TABLE_SET(hash, st_init_table_with_size(RHASH_TYPE(hash2), RHASH_SIZE(hash2)));
-        }
+        ar_free_and_clear_table(hash);
     }
     else {
-        if (RHASH_AR_TABLE_P(hash2)) {
-            st_free_table(RHASH_ST_TABLE(hash));
-            RHASH_ST_CLEAR(hash);
-        }
-        else {
-            st_clear(RHASH_ST_TABLE(hash));
-            RHASH_TBL_RAW(hash)->type = RHASH_ST_TABLE(hash2)->type;
-        }
+        st_free_table(RHASH_ST_TABLE(hash));
+        RHASH_ST_CLEAR(hash);
     }
     hash_copy(hash, hash2);
+    if (RHASH_EMPTY_P(hash2) && RHASH_ST_TABLE_P(hash2)) {
+        /* ident hash */
+        RHASH_ST_TABLE_SET(hash, st_init_table_with_size(RHASH_TYPE(hash2), 0));
+    }
 
     rb_gc_writebarrier_remember(hash);
 

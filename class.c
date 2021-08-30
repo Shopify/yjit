@@ -89,14 +89,14 @@ rb_module_add_to_subclasses_list(VALUE module, VALUE iclass)
 void
 rb_class_remove_from_super_subclasses(VALUE klass)
 {
-    rb_subclass_entry_t *entry;
+    rb_subclass_entry_t **prev = RCLASS_PARENT_SUBCLASSES(klass);
 
-    if (RCLASS_PARENT_SUBCLASSES(klass)) {
-	entry = *RCLASS_PARENT_SUBCLASSES(klass);
+    if (prev) {
+	rb_subclass_entry_t *entry = *prev, *next = entry->next;
 
-	*RCLASS_PARENT_SUBCLASSES(klass) = entry->next;
-	if (entry->next) {
-	    RCLASS_PARENT_SUBCLASSES(entry->next->klass) = RCLASS_PARENT_SUBCLASSES(klass);
+	*prev = next;
+	if (next) {
+	    RCLASS_PARENT_SUBCLASSES(next->klass) = prev;
 	}
 	xfree(entry);
     }
@@ -107,14 +107,14 @@ rb_class_remove_from_super_subclasses(VALUE klass)
 void
 rb_class_remove_from_module_subclasses(VALUE klass)
 {
-    rb_subclass_entry_t *entry;
+    rb_subclass_entry_t **prev = RCLASS_MODULE_SUBCLASSES(klass);
 
-    if (RCLASS_MODULE_SUBCLASSES(klass)) {
-	entry = *RCLASS_MODULE_SUBCLASSES(klass);
-	*RCLASS_MODULE_SUBCLASSES(klass) = entry->next;
+    if (prev) {
+        rb_subclass_entry_t *entry = *prev, *next = entry->next;
 
-	if (entry->next) {
-	    RCLASS_MODULE_SUBCLASSES(entry->next->klass) = RCLASS_MODULE_SUBCLASSES(klass);
+	*prev = next;
+	if (next) {
+	    RCLASS_MODULE_SUBCLASSES(next->klass) = prev;
 	}
 
 	xfree(entry);
@@ -185,8 +185,7 @@ class_alloc(VALUE flags, VALUE klass)
     RVARGC_NEWOBJ_OF(obj, struct RClass, klass, (flags & T_MASK) | FL_PROMOTED1 /* start from age == 2 */ | (RGENGC_WB_PROTECTED_CLASS ? FL_WB_PROTECTED : 0), payload_size);
 
 #if USE_RVARGC
-    obj->ptr = (rb_classext_t *)rb_rvargc_payload_data_ptr((VALUE)obj + rb_slot_size());
-    RB_OBJ_WRITTEN(obj, Qundef, (VALUE)obj + rb_slot_size());
+    obj->ptr = (rb_classext_t *)rb_gc_rvargc_object_data((VALUE)obj);
 #else
     obj->ptr = ZALLOC(rb_classext_t);
 #endif
@@ -1124,10 +1123,10 @@ do_include_modules_at(const VALUE klass, VALUE c, VALUE module, int search_super
             add_subclass = FALSE;
         }
 
-	{
+	if (add_subclass) {
 	    VALUE m = module;
             if (BUILTIN_TYPE(m) == T_ICLASS) m = RBASIC(m)->klass;
-            if (add_subclass) rb_module_add_to_subclasses_list(m, iclass);
+            rb_module_add_to_subclasses_list(m, iclass);
 	}
 
 	if (FL_TEST(klass, RMODULE_IS_REFINEMENT)) {
@@ -1347,8 +1346,13 @@ VALUE
 rb_mod_ancestors(VALUE mod)
 {
     VALUE p, ary = rb_ary_new();
+    VALUE refined_class = Qnil;
+    if (FL_TEST(mod, RMODULE_IS_REFINEMENT)) {
+        refined_class = rb_refinement_module_get_refined_class(mod);
+    }
 
     for (p = mod; p; p = RCLASS_SUPER(p)) {
+        if (p == refined_class) break;
         if (p != RCLASS_ORIGIN(p)) continue;
 	if (BUILTIN_TYPE(p) == T_ICLASS) {
 	    rb_ary_push(ary, RBASIC(p)->klass);

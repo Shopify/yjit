@@ -44,6 +44,7 @@ module Reline
 
     def initialize
       self.output = STDOUT
+      @dialog_proc_list = []
       yield self
       @completion_quote_character = nil
       @bracketed_paste_finished = false
@@ -106,6 +107,14 @@ module Reline
       @completion_proc = p
     end
 
+    def autocompletion
+      @config.autocompletion
+    end
+
+    def autocompletion=(val)
+      @config.autocompletion = val
+    end
+
     def output_modifier_proc=(p)
       raise ArgumentError unless p.respond_to?(:call) or p.nil?
       @output_modifier_proc = p
@@ -128,6 +137,12 @@ module Reline
     def dig_perfect_match_proc=(p)
       raise ArgumentError unless p.respond_to?(:call) or p.nil?
       @dig_perfect_match_proc = p
+    end
+
+    def add_dialog_proc(name_sym, p, context = nil)
+      raise ArgumentError unless p.respond_to?(:call) or p.nil?
+      raise ArgumentError unless name_sym.instance_of?(Symbol)
+      @dialog_proc_list << [name_sym, p, context]
     end
 
     def input=(val)
@@ -170,6 +185,45 @@ module Reline
     def get_screen_size
       Reline::IOGate.get_screen_size
     end
+
+    Reline::DEFAULT_DIALOG_PROC_AUTOCOMPLETE = ->() {
+      # autocomplete
+      return nil unless config.autocompletion
+      if just_cursor_moving and completion_journey_data.nil?
+        # Auto complete starts only when edited
+        return nil
+      end
+      pre, target, post= retrieve_completion_block(true)
+      if target.nil? or target.empty?# or target.size <= 3
+        return nil
+      end
+      if completion_journey_data and completion_journey_data.list
+        result = completion_journey_data.list.dup
+        result.shift
+        pointer = completion_journey_data.pointer - 1
+      else
+        result = call_completion_proc_with_checking_args(pre, target, post)
+        pointer = nil
+      end
+      if result and result.size == 1 and result[0] == target
+        result = nil
+      end
+      target_width = Reline::Unicode.calculate_width(target)
+      x = cursor_pos.x - target_width
+      if x < 0
+        x = screen_width + x
+        y = -1
+      else
+        y = 0
+      end
+      cursor_pos_to_render = Reline::CursorPos.new(x, y)
+      if context and context.is_a?(Array)
+        context.clear
+        context.push(cursor_pos_to_render, result, pointer)
+      end
+      [cursor_pos_to_render, result, pointer, nil]
+    }
+    Reline::DEFAULT_DIALOG_CONTEXT = Array.new
 
     def readmultiline(prompt = '', add_hist = false, &confirm_multiline_termination)
       unless confirm_multiline_termination
@@ -230,6 +284,10 @@ module Reline
       line_editor.auto_indent_proc = auto_indent_proc
       line_editor.dig_perfect_match_proc = dig_perfect_match_proc
       line_editor.pre_input_hook = pre_input_hook
+      @dialog_proc_list.each do |d|
+        name_sym, dialog_proc, context = d
+        line_editor.add_dialog_proc(name_sym, dialog_proc, context)
+      end
 
       unless config.test_mode
         config.read
@@ -424,6 +482,8 @@ module Reline
   def_single_delegators :core, :ambiguous_width
   def_single_delegators :core, :last_incremental_search
   def_single_delegators :core, :last_incremental_search=
+  def_single_delegators :core, :add_dialog_proc
+  def_single_delegators :core, :autocompletion, :autocompletion=
 
   def_single_delegators :core, :readmultiline
   def_instance_delegators self, :readmultiline
@@ -445,6 +505,7 @@ module Reline
       core.completer_quote_characters = '"\''
       core.filename_quote_characters = ""
       core.special_prefixes = ""
+      core.add_dialog_proc(:autocomplete, Reline::DEFAULT_DIALOG_PROC_AUTOCOMPLETE, Reline::DEFAULT_DIALOG_CONTEXT)
     }
   end
 

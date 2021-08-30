@@ -42,7 +42,6 @@ struct lex_context;
 #include "internal/re.h"
 #include "internal/symbol.h"
 #include "internal/thread.h"
-#include "internal/util.h"
 #include "internal/variable.h"
 #include "node.h"
 #include "probes.h"
@@ -337,7 +336,7 @@ struct parser_params {
     unsigned int do_loop: 1;
     unsigned int do_chomp: 1;
     unsigned int do_split: 1;
-    unsigned int save_script_lines: 1;
+    unsigned int keep_script_lines: 1;
 
     NODE *eval_tree_begin;
     NODE *eval_tree;
@@ -6251,7 +6250,7 @@ yycompile0(VALUE arg)
 	    cov = Qtrue;
 	}
     }
-    if (p->save_script_lines) {
+    if (p->keep_script_lines) {
         if (!p->debug_lines) {
             p->debug_lines = rb_ary_new();
         }
@@ -13197,12 +13196,12 @@ rb_parser_set_context(VALUE vparser, const struct rb_iseq_struct *base, int main
 }
 
 void
-rb_parser_save_script_lines(VALUE vparser)
+rb_parser_keep_script_lines(VALUE vparser)
 {
     struct parser_params *p;
 
     TypedData_Get_Struct(vparser, struct parser_params, &parser_data_type, p);
-    p->save_script_lines = 1;
+    p->keep_script_lines = 1;
 }
 #endif
 

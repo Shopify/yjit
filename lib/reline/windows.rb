@@ -42,6 +42,14 @@ class Reline::Windows
     }.each_pair do |key, func|
       config.add_default_key_binding_by_keymap(:emacs, key, func)
     end
+
+    # Emulate ANSI key sequence.
+    {
+      [27, 91, 90] => :completion_journey_up, # S-Tab
+    }.each_pair do |key, func|
+      config.add_default_key_binding_by_keymap(:emacs, key, func)
+      config.add_default_key_binding_by_keymap(:vi_insert, key, func)
+    end
   end
 
   if defined? JRUBY_VERSION
@@ -106,6 +114,7 @@ class Reline::Windows
   SCROLLLOCK_ON = 0x0040
   SHIFT_PRESSED = 0x0010
 
+  VK_TAB = 0x09
   VK_END = 0x23
   VK_HOME = 0x24
   VK_LEFT = 0x25
@@ -133,9 +142,11 @@ class Reline::Windows
   @@GetFileType = Win32API.new('kernel32', 'GetFileType', ['L'], 'L')
   @@GetFileInformationByHandleEx = Win32API.new('kernel32', 'GetFileInformationByHandleEx', ['L', 'I', 'P', 'L'], 'I')
   @@FillConsoleOutputAttribute = Win32API.new('kernel32', 'FillConsoleOutputAttribute', ['L', 'L', 'L', 'L', 'P'], 'L')
+  @@SetConsoleCursorInfo = Win32API.new('kernel32', 'SetConsoleCursorInfo', ['L', 'P'], 'L')
 
   @@GetConsoleMode = Win32API.new('kernel32', 'GetConsoleMode', ['L', 'P'], 'L')
   @@SetConsoleMode = Win32API.new('kernel32', 'SetConsoleMode', ['L', 'L'], 'L')
+  @@WaitForSingleObject = Win32API.new('kernel32', 'WaitForSingleObject', ['L', 'L'], 'L')
   ENABLE_VIRTUAL_TERMINAL_PROCESSING = 4
 
   private_class_method def self.getconsolemode
@@ -197,6 +208,9 @@ class Reline::Windows
     [ { control_keys: [], virtual_key_code: VK_DELETE }, [0, 83] ],
     [ { control_keys: [], virtual_key_code: VK_HOME },   [0, 71] ],
     [ { control_keys: [], virtual_key_code: VK_END },    [0, 79] ],
+
+    # Emulate ANSI key sequence.
+    [ { control_keys: :SHIFT, virtual_key_code: VK_TAB }, [27, 91, 90] ],
   ]
 
   def self.process_key_event(repeat_count, virtual_key_code, virtual_scan_code, char_code, control_key_state)
@@ -218,6 +232,7 @@ class Reline::Windows
   def self.check_input_event
     num_of_events = 0.chr * 8
     while @@output_buf.empty? #or true
+      next if @@WaitForSingleObject.(@@hConsoleInputHandle, 100) != 0 # max 0.1 sec
       next if @@GetNumberOfConsoleInputEvents.(@@hConsoleInputHandle, num_of_events) == 0 or num_of_events.unpack('L').first == 0
       input_record = 0.chr * 18
       read_event = 0.chr * 4
@@ -339,6 +354,20 @@ class Reline::Windows
 
   def self.set_screen_size(rows, columns)
     raise NotImplementedError
+  end
+
+  def self.hide_cursor
+    size = 100
+    visible = 0 # 0 means false
+    cursor_info = [size, visible].pack('Li')
+    @@SetConsoleCursorInfo.call(@@hConsoleHandle, cursor_info)
+  end
+
+  def self.show_cursor
+    size = 100
+    visible = 1 # 1 means true
+    cursor_info = [size, visible].pack('Li')
+    @@SetConsoleCursorInfo.call(@@hConsoleHandle, cursor_info)
   end
 
   def self.set_winch_handler(&handler)

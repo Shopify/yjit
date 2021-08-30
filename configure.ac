@@ -799,7 +799,7 @@ AS_IF([test "$GCC" = yes], [
       ])
     ],
     [cygwin*|msys*|darwin*|netbsd*], [
-      # need lgamma_r(), finite()
+      # need lgamma_r()
     ])
 
     # ANSI (no XCFLAGS because this is C only)
@@ -1915,9 +1915,7 @@ AC_REPLACE_FUNCS(strlcpy)
 AC_REPLACE_FUNCS(strstr)
 AC_REPLACE_FUNCS(tgamma)
 
-RUBY_REPLACE_FUNC([finite], [@%:@include <math.h>])
-RUBY_REPLACE_FUNC([isinf], [@%:@include <math.h>])
-RUBY_REPLACE_FUNC([isnan], [@%:@include <math.h>])
+AC_DEFINE(HAVE_ISFINITE)        # C99; backward compatibility
 
 # for missing/setproctitle.c
 AS_CASE(["$target_os"],
@@ -1927,17 +1925,7 @@ AS_CASE(["$target_os"],
 AC_CHECK_HEADERS(sys/pstat.h)
 
 
-AC_CACHE_CHECK(for signbit, rb_cv_have_signbit,
-  [AC_LINK_IFELSE([AC_LANG_PROGRAM([[
-#include <math.h>
-]], [[int v = signbit(-0.0);]])],
-	rb_cv_have_signbit=yes,
-	rb_cv_have_signbit=no)])
-AS_IF([test "$rb_cv_have_signbit" = yes], [
-  AC_DEFINE(HAVE_SIGNBIT)
-], [
-  AC_LIBOBJ([signbit])
-])
+AC_DEFINE(HAVE_SIGNBIT)         # C99; backward compatibility
 
 AC_FUNC_FORK
 
@@ -2552,6 +2540,15 @@ AS_CASE([$coroutine_type], [yes|''], [
             coroutine_type=x86
         ],
         [aarch64-freebsd*], [
+            coroutine_type=arm64
+        ],
+        [x86_64-netbsd*], [
+            coroutine_type=amd64
+        ],
+        [i386-netbsd*], [
+            coroutine_type=x86
+        ],
+        [aarch64-netbsd*], [
             coroutine_type=arm64
         ],
         [x86_64-openbsd*], [
@@ -3763,7 +3760,7 @@ AS_CASE(["$target_os"],
 		LIBRUBY_DLDFLAGS="${LIBRUBY_DLDFLAGS}"' $(RUBYDEF)'
 	    ])
 	    EXPORT_PREFIX=' '
-	    DLDFLAGS="${DLDFLAGS}"' $(DEFFILE)'
+	    EXTDLDFLAGS='$(DEFFILE)'
 	    AC_LIBOBJ([win32/win32])
 	    AC_LIBOBJ([win32/file])
 	    COMMON_LIBS=m
@@ -4283,21 +4280,6 @@ AC_ARG_WITH(destdir,
 	    AS_HELP_STRING([--with-destdir=DESTDIR], [specify default directory to install]),
 	    [DESTDIR="$withval"])
 AC_SUBST(DESTDIR)
-
-AC_CONFIG_FILES($ruby_pc:template/ruby.pc.in,
-    [
-    AS_IF([sed ['s/\$(\([A-Za-z_][A-Za-z0-9_]*\))/${\1}/g;s/@[A-Za-z_][A-Za-z0-9_]*@//'] $ruby_pc > ruby.tmp.pc &&
-	{
-	    test -z "$PKG_CONFIG" ||
-	    PKG_CONFIG_PATH=. $PKG_CONFIG --print-errors ruby.tmp
-	}],
-    [
-	mv -f ruby.tmp.pc $ruby_pc
-    ], [
-	exit 1
-    ])
-    ],
-    [ruby_pc='$ruby_pc' PKG_CONFIG='$PKG_CONFIG'])
 
 AC_OUTPUT
 }
