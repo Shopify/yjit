@@ -441,6 +441,29 @@ assert_equal '7', %q{
     foo(4)[1]
 }
 
+# Method redefinition while the method is on the stack
+assert_equal '[777, 1]', %q{
+    def foo
+        redef()
+        777
+    end
+
+    def redef
+        # Redefine the global foo
+        eval("def foo; 1; end", TOPLEVEL_BINDING)
+
+        # Collect dead code
+        GC.stress = true
+        GC.start
+
+        # But we will return to the original foo,
+        # which remains alive because it's on the stack
+    end
+
+    # Must produce [777, 1]
+    [foo, foo]
+}
+
 # Test for GC safety. Don't invalidate dead iseqs.
 assert_normal_exit %q{
   Class.new do
@@ -1419,6 +1442,85 @@ assert_equal '[:B, [:B, :m]]', %q{
 
   ins.singleton_class.define_method(:bar, B.instance_method(:foo))
   ins.bar
+}
+
+# invokesuper changed ancestor
+assert_equal '[:A, [:M, :B]]', %q{
+  class B
+    def foo
+      :B
+    end
+  end
+
+  class A < B
+    def foo
+      [:A, super]
+    end
+  end
+
+  module M
+    def foo
+      [:M, super]
+    end
+  end
+
+  ins = A.new
+  ins.foo
+  ins.foo
+  A.include(M)
+  ins.foo
+}
+
+# invokesuper changed ancestor via prepend
+assert_equal '[:A, [:M, :B]]', %q{
+  class B
+    def foo
+      :B
+    end
+  end
+
+  class A < B
+    def foo
+      [:A, super]
+    end
+  end
+
+  module M
+    def foo
+      [:M, super]
+    end
+  end
+
+  ins = A.new
+  ins.foo
+  ins.foo
+  B.prepend(M)
+  ins.foo
+}
+
+# invokesuper replaced method
+assert_equal '[:A, :Btwo]', %q{
+  class B
+    def foo
+      :B
+    end
+  end
+
+  class A < B
+    def foo
+      [:A, super]
+    end
+  end
+
+  ins = A.new
+  ins.foo
+  ins.foo
+  class B
+    def foo
+      :Btwo
+    end
+  end
+  ins.foo
 }
 
 # Call to fixnum
