@@ -146,6 +146,12 @@ module YJIT
     Primitive.cexpr! 'rb_yjit_enabled_p() ? Qtrue : Qfalse'
   end
 
+  # Method for testing when YJIT runs out of executable memory
+  def self.simulate_out_of_mem!
+    # defined in yjit_iface.c
+    Primitive.simulate_out_of_mem_bang
+  end
+
   class << self
     private
 
