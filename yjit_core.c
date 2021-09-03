@@ -15,7 +15,7 @@
 Get an operand for the adjusted stack pointer address
 */
 x86opnd_t
-ctx_sp_opnd(ctx_t* ctx, int32_t offset_bytes)
+ctx_sp_opnd(const ctx_t *ctx, int32_t offset_bytes)
 {
     int32_t offset = (ctx->sp_offset * sizeof(VALUE)) + offset_bytes;
     return mem_opnd(64, REG_SP, offset);
@@ -638,7 +638,8 @@ void limit_block_versions(blockid_t blockid, ctx_t* ctx)
 }
 
 // Compile a new block version immediately
-block_t* gen_block_version(blockid_t blockid, const ctx_t* start_ctx, rb_execution_context_t* ec)
+static block_t *
+gen_block_version(blockid_t blockid, const ctx_t* start_ctx, rb_execution_context_t* ec)
 {
     // Allocate a new block version object
     block_t* block = calloc(1, sizeof(block_t));
@@ -652,7 +653,10 @@ block_t* gen_block_version(blockid_t blockid, const ctx_t* start_ctx, rb_executi
     limit_block_versions(block->blockid, &block->ctx);
 
     // Generate code for the first block
-    yjit_gen_block(block, ec);
+    if (!yjit_gen_block(block, ec)) {
+        free(block);
+        return NULL;
+    }
 
     // Keep track of the new block version
     add_block_version(block->blockid, block);
@@ -687,7 +691,12 @@ block_t* gen_block_version(blockid_t blockid, const ctx_t* start_ctx, rb_executi
         limit_block_versions(block->blockid, &block->ctx);
 
         // Generate code for the current block
-        yjit_gen_block(block, ec);
+        if (!yjit_gen_block(block, ec)) {
+            // TODO: note that we fail to free the blocks allocated
+            //       in other iterations of this loop.
+            free(block);
+            return NULL;
+        }
 
         // Keep track of the new block version
         add_block_version(block->blockid, block);
@@ -704,7 +713,8 @@ block_t* gen_block_version(blockid_t blockid, const ctx_t* start_ctx, rb_executi
 }
 
 // Generate a block version that is an entry point inserted into an iseq
-uint8_t* gen_entry_point(const rb_iseq_t *iseq, uint32_t insn_idx, rb_execution_context_t *ec)
+uint8_t *
+gen_entry_point(const rb_iseq_t *iseq, uint32_t insn_idx, rb_execution_context_t *ec)
 {
     // If we aren't at PC 0, don't generate code
     // See yjit_pc_guard
@@ -716,14 +726,17 @@ uint8_t* gen_entry_point(const rb_iseq_t *iseq, uint32_t insn_idx, rb_execution_
     blockid_t blockid = { iseq, insn_idx };
 
     // Write the interpreter entry prologue
-    uint8_t* code_ptr = yjit_entry_prologue(iseq);
+    uint8_t *code_ptr = yjit_entry_prologue(iseq);
+
+    if (!code_ptr) {
+        return NULL;
+    }
 
     // Try to generate code for the entry block
-    block_t* block = gen_block_version(blockid, &DEFAULT_CTX, ec);
+    block_t *block = gen_block_version(blockid, &DEFAULT_CTX, ec);
 
     // If we couldn't generate any code
-    if (block->end_idx == insn_idx)
-    {
+    if (!block || block->end_idx == insn_idx) {
         return NULL;
     }
 
@@ -735,7 +748,7 @@ uint8_t* gen_entry_point(const rb_iseq_t *iseq, uint32_t insn_idx, rb_execution_
 static uint8_t *
 branch_stub_hit(branch_t* branch, const uint32_t target_idx, rb_execution_context_t* ec)
 {
-    uint8_t* dst_addr;
+    uint8_t *dst_addr = NULL;
 
     // Stop other ractors since we are going to patch machine code.
     // This is how the GC does it.
@@ -752,8 +765,7 @@ branch_stub_hit(branch_t* branch, const uint32_t target_idx, rb_execution_contex
     if (branch->blocks[target_idx]) {
         dst_addr = branch->dst_addrs[target_idx];
     }
-    else
-    {
+    else {
         //fprintf(stderr, "\nstub hit, branch: %p, target idx: %d\n", branch, target_idx);
         //fprintf(stderr, "blockid.iseq=%p, blockid.idx=%d\n", target.iseq, target.idx);
         //fprintf(stderr, "chain_depth=%d\n", target_ctx->chain_depth);
@@ -794,29 +806,32 @@ branch_stub_hit(branch_t* branch, const uint32_t target_idx, rb_execution_contex
 
             // Compile the new block version
             p_block = gen_block_version(target, target_ctx, ec);
-            RUBY_ASSERT(p_block);
+        }
+
+        if (p_block) {
+            // Assert that branch shape describes layout
             RUBY_ASSERT(!(branch->shape == (uint8_t)target_idx && p_block->start_pos != branch->end_pos));
+
+            // Add this branch to the list of incoming branches for the target
+            rb_darray_append(&p_block->incoming, branch);
+
+            // Update the branch target address
+            dst_addr = cb_get_ptr(cb, p_block->start_pos);
+            branch->dst_addrs[target_idx] = dst_addr;
+
+            // Rewrite the branch with the new jump target address
+            if (branch->start_pos >= yjit_codepage_frozen_bytes) {
+                RUBY_ASSERT(branch->dst_addrs[0] != NULL);
+                uint32_t cur_pos = cb->write_pos;
+                cb_set_pos(cb, branch->start_pos);
+                branch->gen_fn(cb, branch->dst_addrs[0], branch->dst_addrs[1], branch->shape);
+                RUBY_ASSERT(cb->write_pos == branch->end_pos && "branch can't change size");
+                cb_set_pos(cb, cur_pos);
+            }
+
+            // Mark this branch target as patched (no longer a stub)
+            branch->blocks[target_idx] = p_block;
         }
-
-        // Add this branch to the list of incoming branches for the target
-        rb_darray_append(&p_block->incoming, branch);
-
-        // Update the branch target address
-        dst_addr = cb_get_ptr(cb, p_block->start_pos);
-        branch->dst_addrs[target_idx] = dst_addr;
-
-        // Rewrite the branch with the new jump target address
-        if (branch->start_pos >= yjit_codepage_frozen_bytes) {
-            RUBY_ASSERT(branch->dst_addrs[0] != NULL);
-            uint32_t cur_pos = cb->write_pos;
-            cb_set_pos(cb, branch->start_pos);
-            branch->gen_fn(cb, branch->dst_addrs[0], branch->dst_addrs[1], branch->shape);
-            RUBY_ASSERT(cb->write_pos == branch->end_pos && "branch can't change size");
-            cb_set_pos(cb, cur_pos);
-        }
-
-        // Mark this branch target as patched (no longer a stub)
-        branch->blocks[target_idx] = p_block;
 
         // Restore interpreter sp, since the code hitting the stub expects the original.
         ec->cfp->sp = original_interp_sp;
@@ -852,17 +867,30 @@ uint8_t* get_branch_target(
     }
 
     // Generate an outlined stub that will call branch_stub_hit()
-    uint8_t* stub_addr = cb_get_ptr(ocb, ocb->write_pos);
+    uint8_t *stub_addr = cb_get_ptr(ocb, ocb->write_pos);
+    uint32_t gen_stub_failed = cb_new_label(ocb, "gen_stub_failed");
 
     // Call branch_stub_hit(branch_idx, target_idx, ec)
     mov(ocb, C_ARG_REGS[2], REG_EC);
-    mov(ocb, C_ARG_REGS[1],  imm_opnd(target_idx));
+    mov(ocb, C_ARG_REGS[1], imm_opnd(target_idx));
     mov(ocb, C_ARG_REGS[0], const_ptr_opnd(branch));
     call_ptr(ocb, REG0, (void *)&branch_stub_hit);
+
+    // if branch_stub_hit returns NULL, exit to the interpreter
+    test(ocb, RAX, RAX);
+    jz_label(ocb, gen_stub_failed);
 
     // Jump to the address returned by the
     // branch_stub_hit call
     jmp_rm(ocb, RAX);
+
+    // Exit to the interpreter at target
+    cb_write_label(ocb, gen_stub_failed);
+    cb_link_labels(ocb);
+    VALUE *exit_pc = target.iseq->body->iseq_encoded + target.idx;
+    yjit_gen_stub_compile_failure_exit(exit_pc, ctx, ocb);
+
+    RUBY_ASSERT_ALWAYS(ocb->write_pos < ocb->mem_size);
 
     return stub_addr;
 }
@@ -1086,6 +1114,7 @@ invalidate_block_version(block_t *block)
             continue;
         }
 
+        // TODO: This generates new code. What to do if there is no memory left?
         // Create a stub for this branch target
         branch->dst_addrs[target_idx] = get_branch_target(
             block->blockid,

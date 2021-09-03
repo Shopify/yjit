@@ -89,6 +89,8 @@ YJIT_DECLARE_COUNTERS(
     binding_allocations,
     binding_set,
 
+    exit_stub_compile_failure,
+
     vm_insns_count,
     compiled_iseq_count,
 

@@ -335,9 +335,10 @@ _counted_side_exit(uint8_t *existing_side_exit, int64_t *counter)
 #endif // if YJIT_STATS
 
 
-// Generate an exit to return to the interpreter
+// Generate an exit to return to the interpreter.
+// Use a counted variant.
 static uint32_t
-yjit_gen_exit(VALUE *exit_pc, ctx_t *ctx, codeblock_t *cb)
+yjit_gen_uncounted_exit(VALUE *exit_pc, const ctx_t *ctx, codeblock_t *cb)
 {
     const uint32_t code_pos = cb->write_pos;
 
@@ -358,14 +359,6 @@ yjit_gen_exit(VALUE *exit_pc, ctx_t *ctx, codeblock_t *cb)
     mov(cb, RAX, const_ptr_opnd(exit_pc));
     mov(cb, member_opnd(REG_CFP, rb_control_frame_t, pc), RAX);
 
-    // Accumulate stats about interpreter exits
-#if YJIT_STATS
-    if (rb_yjit_opts.gen_stats) {
-        mov(cb, RDI, const_ptr_opnd(exit_pc));
-        call_ptr(cb, RSI, (void *)&rb_yjit_count_side_exit_op);
-    }
-#endif
-
     pop(cb, REG_SP);
     pop(cb, REG_EC);
     pop(cb, REG_CFP);
@@ -374,6 +367,29 @@ yjit_gen_exit(VALUE *exit_pc, ctx_t *ctx, codeblock_t *cb)
     ret(cb);
 
     return code_pos;
+}
+
+// Generate an exit to return to the interpreter
+static uint32_t
+yjit_gen_exit(VALUE *exit_pc, const ctx_t *ctx, codeblock_t *cb)
+{
+    // Accumulate stats about interpreter exits
+#if YJIT_STATS
+    if (rb_yjit_opts.gen_stats) {
+        mov(cb, RDI, const_ptr_opnd(exit_pc));
+        call_ptr(cb, RSI, (void *)&rb_yjit_count_side_exit_op);
+    }
+#endif
+
+    return yjit_gen_uncounted_exit(exit_pc, ctx, cb);
+}
+
+// Exit for in case compiling a lazy stub fails
+uint32_t
+yjit_gen_stub_compile_failure_exit(VALUE *exit_pc, const ctx_t *ctx, codeblock_t *cb)
+{
+    GEN_COUNTER_INC(cb, exit_stub_compile_failure);
+    return yjit_gen_uncounted_exit(exit_pc, ctx, cb);
 }
 
 // Generate a continuation for gen_leave() that exits to the interpreter at REG_CFP->pc.
@@ -505,8 +521,9 @@ yjit_entry_prologue(const rb_iseq_t *iseq)
 {
     RUBY_ASSERT(cb != NULL);
 
+    // Check if we have enough memory
     if (cb->write_pos + 1024 >= cb->mem_size) {
-        rb_bug("out of executable memory");
+        return NULL;
     }
 
     // Align the current write positon to cache line boundaries
@@ -585,8 +602,9 @@ jit_jump_to_next_insn(jitstate_t *jit, const ctx_t *current_context)
     );
 }
 
-// Compile a sequence of bytecode instructions for a given basic block version
-void
+// Compile a sequence of bytecode instructions for a given basic block version.
+// Return whether compilation succeeds.
+bool
 yjit_gen_block(block_t *block, rb_execution_context_t *ec)
 {
     RUBY_ASSERT(cb != NULL);
@@ -601,14 +619,12 @@ yjit_gen_block(block_t *block, rb_execution_context_t *ec)
     uint32_t insn_idx = block->blockid.idx;
     const uint32_t starting_insn_idx = insn_idx;
 
-    // NOTE: if we are ever deployed in production, we
-    // should probably just log an error and return NULL here,
-    // so we can fail more gracefully
+    // Check if we have enough executable memory
     if (cb->write_pos + 1024 >= cb->mem_size) {
-        rb_bug("out of executable memory");
+        return false;
     }
     if (ocb->write_pos + 1024 >= ocb->mem_size) {
-        rb_bug("out of executable memory (outlined block)");
+        return false;
     }
 
     // Initialize a JIT state object
@@ -720,6 +736,8 @@ yjit_gen_block(block_t *block, rb_execution_context_t *ec)
             idx += insn_len(opcode);
         }
     }
+
+    return true;
 }
 
 static codegen_status_t

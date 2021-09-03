@@ -265,7 +265,7 @@ typedef struct yjit_block_version
 } block_t;
 
 // Context object methods
-x86opnd_t ctx_sp_opnd(ctx_t* ctx, int32_t offset_bytes);
+x86opnd_t ctx_sp_opnd(const ctx_t *ctx, int32_t offset_bytes);
 x86opnd_t ctx_stack_push_mapping(ctx_t* ctx, temp_type_mapping_t mapping);
 x86opnd_t ctx_stack_push(ctx_t* ctx, val_type_t type);
 x86opnd_t ctx_stack_push_self(ctx_t* ctx);
@@ -285,7 +285,6 @@ temp_type_mapping_t ctx_get_opnd_mapping(const ctx_t* ctx, insn_opnd_t opnd);
 void ctx_set_opnd_mapping(ctx_t* ctx, insn_opnd_t opnd, temp_type_mapping_t type_mapping);
 
 block_t* find_block_version(blockid_t blockid, const ctx_t* ctx);
-block_t* gen_block_version(blockid_t blockid, const ctx_t* ctx, rb_execution_context_t *ec);
 uint8_t*  gen_entry_point(const rb_iseq_t *iseq, uint32_t insn_idx, rb_execution_context_t *ec);
 void yjit_free_block(block_t *block);
 rb_yjit_block_array_t yjit_get_version_array(const rb_iseq_t *iseq, unsigned idx);

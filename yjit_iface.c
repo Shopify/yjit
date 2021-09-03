@@ -822,8 +822,10 @@ set_stats_enabled(rb_execution_context_t *ec, VALUE self, VALUE enabled)
 static VALUE
 simulate_out_of_mem_bang(rb_execution_context_t *ec, VALUE self)
 {
-    cb_set_pos(cb, cb->mem_size - 1);
-    cb_set_pos(ocb, ocb->mem_size - 1);
+    if (cb && ocb) {
+        cb_set_pos(cb, cb->mem_size - 1);
+        cb_set_pos(ocb, ocb->mem_size - 1);
+    }
     return Qnil;
 }
 

@@ -1928,3 +1928,44 @@ assert_equal '42', %q{
 
   ractor.take
 }
+
+# Test generating new code while out of memory
+assert_equal 'ok', %q{
+  def foo
+    :ok
+  end
+
+  YJIT.simulate_out_of_mem!
+  foo
+  foo
+}
+
+# Test hitting lazy branch stub while out of memory
+assert_equal 'ok', %q{
+  def compiled(foo)
+    if foo
+      itself
+      :ng
+    else
+      itself
+      :ok
+    end
+  end
+
+  compiled(true)
+  YJIT.simulate_out_of_mem!
+  compiled(false)
+}
+
+assert_equal 'ok', %q{
+  def bar(yjit)
+    yjit.simulate_out_of_mem!
+  end
+
+  def foo(yjit)
+    bar(yjit)
+    :ok
+  end
+
+  foo(YJIT)
+}

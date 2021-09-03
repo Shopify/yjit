@@ -48,7 +48,9 @@ typedef codegen_status_t (*codegen_fn)(jitstate_t* jit, ctx_t* ctx);
 
 uint8_t* yjit_entry_prologue(const rb_iseq_t* iseq);
 
-void yjit_gen_block(block_t* block, rb_execution_context_t* ec);
+bool yjit_gen_block(block_t *block, rb_execution_context_t *ec);
+
+uint32_t yjit_gen_stub_compile_failure_exit(VALUE *exit_pc, const ctx_t *ctx, codeblock_t *cb);
 
 void yjit_init_codegen(void);
 
