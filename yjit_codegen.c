@@ -306,9 +306,11 @@ static void
 _gen_counter_inc(codeblock_t *cb, int64_t *counter)
 {
     if (!rb_yjit_opts.gen_stats) return;
-     mov(cb, REG0, const_ptr_opnd(counter));
-     cb_write_lock_prefix(cb); // for ractors.
-     add(cb, mem_opnd(64, REG0, 0), imm_opnd(1));
+
+    // Use REG1 because there might be return value in REG0
+    mov(cb, REG1, const_ptr_opnd(counter));
+    cb_write_lock_prefix(cb); // for ractors.
+    add(cb, mem_opnd(64, REG1, 0), imm_opnd(1));
 }
 
 // Increment a counter then take an existing side exit.
@@ -380,17 +382,11 @@ yjit_gen_leave_exit(codeblock_t *cb)
 {
     uint8_t *code_ptr = cb_get_ptr(cb, cb->write_pos);
 
-    // Note, gen_leave() fully reconstructs interpreter state before
-    // coming here.
+    // Note, gen_leave() fully reconstructs interpreter state and leaves the
+    // return value in RAX before coming here.
 
     // Every exit to the interpreter should be counted
     GEN_COUNTER_INC(cb, leave_interp_return);
-
-    // GEN_COUNTER_INC clobbers RAX, so put the top of the stack
-    // in to RAX and return.
-    mov(cb, RAX, mem_opnd(64, REG_SP, -SIZEOF_VALUE));
-    sub(cb, member_opnd(REG_CFP, rb_control_frame_t, sp), imm_opnd(SIZEOF_VALUE));
-    mov(cb, REG_SP, member_opnd(REG_CFP, rb_control_frame_t, sp));
 
     pop(cb, REG_SP);
     pop(cb, REG_EC);
@@ -916,6 +912,28 @@ gen_splatarray(jitstate_t* jit, ctx_t* ctx)
     return YJIT_KEEP_COMPILING;
 }
 
+// new range initialized from top 2 values
+static codegen_status_t
+gen_newrange(jitstate_t* jit, ctx_t* ctx)
+{
+    rb_num_t flag = (rb_num_t)jit_get_arg(jit, 0);
+
+    // rb_range_new() allocates and can raise
+    jit_prepare_routine_call(jit, ctx, REG0);
+
+    // val = rb_range_new(low, high, (int)flag);
+    mov(cb, C_ARG_REGS[0], ctx_stack_opnd(ctx, 1));
+    mov(cb, C_ARG_REGS[1], ctx_stack_opnd(ctx, 0));
+    mov(cb, C_ARG_REGS[2], imm_opnd(flag));
+    call_ptr(cb, REG0, (void *)rb_range_new);
+
+    ctx_stack_pop(ctx, 2);
+    x86opnd_t stack_ret = ctx_stack_push(ctx, TYPE_HEAP);
+    mov(cb, stack_ret, RAX);
+
+    return YJIT_KEEP_COMPILING;
+}
+
 static void
 guard_object_is_heap(codeblock_t *cb, x86opnd_t object_opnd, ctx_t *ctx, uint8_t *side_exit)
 {
@@ -968,7 +986,18 @@ gen_expandarray(jitstate_t* jit, ctx_t* ctx)
     // num is the number of requested values. If there aren't enough in the
     // array then we're going to push on nils.
     rb_num_t num = (rb_num_t) jit_get_arg(jit, 0);
+    val_type_t array_type = ctx_get_opnd_type(ctx, OPND_STACK(0));
     x86opnd_t array_opnd = ctx_stack_pop(ctx, 1);
+
+    if (array_type.type == ETYPE_NIL) {
+        // special case for a, b = nil pattern
+        // push N nils onto the stack
+        for (int i = 0; i < num; i++) {
+            x86opnd_t push = ctx_stack_push(ctx, TYPE_NIL);
+            mov(cb, push, imm_opnd(Qnil));
+        }
+        return YJIT_KEEP_COMPILING;
+    }
 
     // Move the array from the stack into REG0 and check that it's an array.
     mov(cb, REG0, array_opnd);
@@ -3026,9 +3055,8 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
     // cfunc calls may corrupt types
     ctx_clear_local_types(ctx);
 
-    // Note: gen_send_iseq() jumps to the next instruction with ctx->sp_offset == 0
-    // after the call, while this does not. This difference prevents
-    // the two call types from sharing the same successor.
+    // Note: the return block of gen_send_iseq() has ctx->sp_offset == 1
+    // which allows for sharing the same successor.
 
     // Jump (fall through) to the call continuation block
     // We do this to end the current block after the call
@@ -3289,11 +3317,12 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
     ctx_clear_local_types(ctx);
 
     // Pop arguments and receiver in return context, push the return value
-    // After the return, the JIT and interpreter SP will match up
+    // After the return, sp_offset will be 1. The codegen for leave writes
+    // the return value in case of JIT-to-JIT return.
     ctx_t return_ctx = *ctx;
     ctx_stack_pop(&return_ctx, argc + 1);
     ctx_stack_push(&return_ctx, TYPE_UNKNOWN);
-    return_ctx.sp_offset = 0;
+    return_ctx.sp_offset = 1;
     return_ctx.chain_depth = 0;
 
     // Write the JIT return address on the callee frame
@@ -3627,11 +3656,10 @@ gen_leave(jitstate_t* jit, ctx_t* ctx)
     add(cb, REG_CFP, imm_opnd(sizeof(rb_control_frame_t)));
     mov(cb, member_opnd(REG_EC, rb_execution_context_t, cfp), REG_CFP);
 
-    // Push the return value on the caller frame
-    // The SP points one above the topmost value
-    add(cb, member_opnd(REG_CFP, rb_control_frame_t, sp), imm_opnd(SIZEOF_VALUE));
+    // Reload REG_SP for the caller and write the return value.
+    // Top of the stack is REG_SP[0] since the caller has sp_offset=1.
     mov(cb, REG_SP, member_opnd(REG_CFP, rb_control_frame_t, sp));
-    mov(cb, mem_opnd(64, REG_SP, -SIZEOF_VALUE), REG0);
+    mov(cb, mem_opnd(64, REG_SP, 0), REG0);
 
     // Jump to the JIT return address on the frame that was just popped
     const int32_t offset_to_jit_return = -((int32_t)sizeof(rb_control_frame_t)) + (int32_t)offsetof(rb_control_frame_t, jit_return);
@@ -4035,6 +4063,7 @@ yjit_init_codegen(void)
     yjit_reg_op(BIN(splatarray), gen_splatarray);
     yjit_reg_op(BIN(expandarray), gen_expandarray);
     yjit_reg_op(BIN(newhash), gen_newhash);
+    yjit_reg_op(BIN(newrange), gen_newrange);
     yjit_reg_op(BIN(concatstrings), gen_concatstrings);
     yjit_reg_op(BIN(putnil), gen_putnil);
     yjit_reg_op(BIN(putobject), gen_putobject);

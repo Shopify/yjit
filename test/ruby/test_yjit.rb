@@ -36,6 +36,14 @@ class TestYJIT < Test::Unit::TestCase
     assert_compiles('[1, 2, 3]', insns: %i[duparray], result: [1, 2, 3])
   end
 
+  def test_compile_newrange
+    assert_compiles('s = 1; (s..5)', insns: %i[newrange], result: 1..5)
+    assert_compiles('s = 1; e = 5; (s..e)', insns: %i[newrange], result: 1..5)
+    assert_compiles('s = 1; (s...5)', insns: %i[newrange], result: 1...5)
+    assert_compiles('s = 1; (s..)', insns: %i[newrange], result: 1..)
+    assert_compiles('e = 5; (..e)', insns: %i[newrange], result: ..5)
+  end
+
   def test_compile_opt_nil_p
     assert_compiles('nil.nil?', insns: %i[opt_nil_p], result: true)
     assert_compiles('false.nil?', insns: %i[opt_nil_p], result: false)
@@ -125,6 +133,19 @@ class TestYJIT < Test::Unit::TestCase
       end
 
       foo("foobar")
+    RUBY
+  end
+
+  def test_expandarray
+    assert_compiles(<<~'RUBY', insns: %i[expandarray], result: [1, 2])
+      a, b = [1, 2]
+    RUBY
+  end
+
+  def test_expandarray_nil
+    assert_compiles(<<~'RUBY', insns: %i[expandarray], result: [nil, nil])
+      a, b = nil
+      [a, b]
     RUBY
   end
 
