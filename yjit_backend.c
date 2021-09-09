@@ -232,6 +232,8 @@ const char* ir_op_name(int op)
     {
         case OP_ADD: return "add";
         case OP_AND: return "and";
+        case OP_CALL: return "call";
+        case OP_CCALL: return "ccall";
         case OP_COMMENT: return "comment";
         case OP_JUMP_EQ: return "jumpeq";
         case OP_JUMP_NE: return "jumpne";
@@ -302,15 +304,11 @@ void ir_print_to_dot(jitstate_t *jit)
 /* Convenience methods for pushing instructions. */
 /*************************************************/
 
-ir_opnd_t ir_add(jitstate_t *jit, ir_opnd_t opnd0, ir_opnd_t opnd1)
-{
-    return ir_push_insn(jit, OP_ADD, opnd0, opnd1);
-}
+#define ir_add(jit, opnd0, opnd1) ir_push_insn(jit, OP_ADD, opnd0, opnd1)
 
-ir_opnd_t ir_and(jitstate_t *jit, ir_opnd_t opnd0, ir_opnd_t opnd1)
-{
-    return ir_push_insn(jit, OP_AND, opnd0, opnd1);
-}
+#define ir_and(jit, opnd0, opnd1) ir_push_insn(jit, OP_AND, opnd0, opnd1)
+
+#define ir_ccall(jit, ...) ir_push_insn(jit, OP_CCALL, __VA_ARGS__)
 
 void ir_comment(jitstate_t *jit, ir_opnd_t opnd)
 {
@@ -347,10 +345,7 @@ ir_opnd_t ir_mov(jitstate_t *jit, ir_opnd_t opnd0, ir_opnd_t opnd1)
     return ir_push_insn(jit, OP_MOV, opnd0, opnd1);
 }
 
-ir_opnd_t ir_not(jitstate_t *jit, ir_opnd_t opnd)
-{
-    return ir_push_insn(jit, OP_NOT, opnd);
-}
+#define ir_not(jit, opnd) ir_push_insn(jit, OP_NOT, opnd)
 
 void ir_ret(jitstate_t *jit)
 {
@@ -362,10 +357,7 @@ void ir_retval(jitstate_t *jit, ir_opnd_t opnd)
     ir_push_insn(jit, OP_RETVAL, opnd);
 }
 
-ir_opnd_t ir_sub(jitstate_t *jit, ir_opnd_t opnd0, ir_opnd_t opnd1)
-{
-    return ir_push_insn(jit, OP_SUB, opnd0, opnd1);
-}
+#define ir_sub(jit, opnd0, opnd1) ir_push_insn(jit, OP_SUB, opnd0, opnd1)
 
 /*************************************************/
 /* Register allocation.                          */
@@ -583,6 +575,42 @@ void ir_alloc_regs(jitstate_t *jit)
 
                 break;
             }
+            case OP_CCALL: {
+                ir_opnd_t function = ir_opnd(insn, 0, allocations);
+                ir_opnd_t pointer = function;
+
+                if (function.kind != EIR_REG) {
+                    // Since we don't have as register as the operand that will
+                    // hold the pointer to the function, we have to first
+                    // allocate one and then mov the function pointer into that
+                    // register.
+                    int32_t allocated_index = ir_next_scr_reg_idx(active);
+                    ir_opnd_t allocated = SCR_REGS[allocated_index];
+
+                    allocations[insn_idx] = allocated_index;
+                    active[allocated_index] = last_insn_index;
+
+                    ir_mov(jit, allocated, function);
+                    pointer = allocated;
+                }
+
+                // Create the next instruction manually (doing this instead of
+                // using ir_push_insn since this function accepts variadic
+                // arguments).
+                ir_insn_t call = (ir_insn_t){ .op = OP_CALL };
+                rb_darray_append(&call.opnds, pointer);
+
+                // Starting at index 1 because we're skipping over the function
+                // pointer operand.
+                int32_t opnd_size = rb_darray_size(insn.opnds);
+                for (int32_t opnd_idx = 1; opnd_idx < opnd_size; opnd_idx++) {
+                    rb_darray_append(&call.opnds, ir_opnd(insn, opnd_idx, allocations));
+                }
+
+                rb_darray_append(&jit->insns, call);
+                break;
+            }
+            case OP_CALL:
             case OP_COMMENT:
             case OP_JUMP_OVF:
             case OP_LABEL:
@@ -680,6 +708,27 @@ void ir_gen_x86(codeblock_t *cb, jitstate_t *jit)
                 and(cb, opnd0, opnd1);
                 break;
             }
+            case OP_CALL: {
+                x86opnd_t pointer = ir_gen_x86opnd(rb_darray_get(insn->opnds, 0));
+                int32_t opnd_size = rb_darray_size(insn->opnds);
+
+                if (opnd_size > NUM_C_ARG_REGS) {
+                    RUBY_ASSERT(false && "unsupported function argument spill");
+                }
+
+                // TODO: some of these movs may not be necessary, and some of
+                // them may overwrite values we need to keep. Presumably there
+                // should be some smart pushing/popping going on here. At the
+                // moment we're just blinding copying values into the correct
+                // registers.
+                for (int32_t opnd_idx = 1; opnd_idx < opnd_size; opnd_idx++) {
+                    x86opnd_t opnd = ir_gen_x86opnd(rb_darray_get(insn->opnds, opnd_idx));
+                    mov(cb, C_ARG_REGS[opnd_idx - 1], opnd);
+                }
+
+                call(cb, pointer);
+                break;
+            }
             case OP_COMMENT:
                 // Do nothing here until/unless we have a way to consistently
                 // represent comments in the assembly
@@ -747,6 +796,17 @@ void ir_gen_x86(codeblock_t *cb, jitstate_t *jit)
 /*************************************************/
 /* Tests for the backend.                        */
 /*************************************************/
+
+// These are just here to have functions to call when testing call instructions
+static int64_t ir_test_function_plain()
+{
+    return 7;
+}
+
+static int64_t ir_test_function_add(int64_t left, int64_t right)
+{
+    return left + right;
+}
 
 void test_backend()
 {
@@ -852,6 +912,14 @@ void test_backend()
         ir_label(jit, label);
         ir_retval(jit, ir_imm(2));
     })
+
+    TEST("call plain", 7, {
+        ir_retval(jit, ir_ccall(jit, ir_const_ptr((void *)&ir_test_function_plain)));
+    });
+
+    TEST("call with arguments", 7, {
+        ir_retval(jit, ir_ccall(jit, ir_const_ptr((void *)&ir_test_function_add), ir_imm(3), ir_imm(4)));
+    });
 
     #undef TEST
 
