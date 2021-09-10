@@ -132,8 +132,8 @@ enum yjit_ir_op
     OP_JUMP_NE,
     OP_JUMP_OVF,
 
-    // TODO:
-    //CALL_CFUNC (var-arg...)
+    OP_CALL,
+    OP_CCALL,
     OP_RET,
     OP_RETVAL,
 
