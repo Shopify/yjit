@@ -3333,10 +3333,10 @@ rb_reg_match_m(int argc, VALUE *argv, VALUE re)
 
 /*
  *  call-seq:
- *     rxp.match?(str)       -> true or false
- *     rxp.match?(str,pos)   -> true or false
+ *     rxp.match?(str)          -> true or false
+ *     rxp.match?(str, pos=0)   -> true or false
  *
- *  Returns a <code>true</code> or <code>false</code> indicates whether the
+ *  Returns <code>true</code> or <code>false</code> to indicate whether the
  *  regexp is matched or not without updating $~ and other related variables.
  *  If the second parameter is present, it specifies the position in the string
  *  to begin the search.

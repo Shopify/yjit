@@ -1970,7 +1970,7 @@ process_options(int argc, char **argv, ruby_cmdline_options_t *opt)
 	VALUE option = rb_hash_new();
 #define SET_COMPILE_OPTION(h, o, name) \
 	rb_hash_aset((h), ID2SYM(rb_intern_const(#name)),		\
-                     (FEATURE_SET_P(o->features, FEATURE_BIT(name)) ? Qtrue : Qfalse));
+                     RBOOL(FEATURE_SET_P(o->features, FEATURE_BIT(name))));
 	SET_COMPILE_OPTION(option, opt, frozen_string_literal);
 	SET_COMPILE_OPTION(option, opt, debug_frozen_string_literal);
 	rb_funcallv(rb_cISeq, rb_intern_const("compile_option="), 1, &option);
@@ -2480,11 +2480,6 @@ external_str_new_cstr(const char *p)
 #endif
 }
 
-/*! Sets the current script name to this value.
- *
- * This is similar to <code>$0 = name</code> in Ruby level but also affects
- * <code>Method#location</code> and others.
- */
 void
 ruby_script(const char *name)
 {
@@ -2568,7 +2563,6 @@ debug_setter(VALUE val, ID id, VALUE *dmy)
     *rb_ruby_debug_ptr() = val;
 }
 
-/*! Defines built-in variables */
 void
 ruby_prog_init(void)
 {
@@ -2669,13 +2663,6 @@ fill_standard_fds(void)
     }
 }
 
-/*! Initializes the process for libruby.
- *
- * This function assumes this process is ruby(1) and it has just started.
- * Usually programs that embed CRuby interpreter may not call this function,
- * and may do their own initialization.
- * argc and argv cannot be NULL.
- */
 void
 ruby_sysinit(int *argc, char ***argv)
 {

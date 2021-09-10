@@ -2767,6 +2767,11 @@ rb_data_object_zalloc(VALUE klass, size_t size, RUBY_DATA_FUNC dmark, RUBY_DATA_
     return obj;
 }
 
+COMPILER_WARNING_PUSH
+#if __has_warning("-Wnonnull-compare") || GCC_VERSION_SINCE(6, 1, 0)
+COMPILER_WARNING_IGNORED(-Wnonnull-compare)
+#endif
+
 VALUE
 rb_data_typed_object_wrap(VALUE klass, void *datap, const rb_data_type_t *type)
 {
@@ -2774,6 +2779,8 @@ rb_data_typed_object_wrap(VALUE klass, void *datap, const rb_data_type_t *type)
     if (klass) rb_data_object_check(klass);
     return newobj_of(klass, T_DATA, (VALUE)type, (VALUE)1, (VALUE)datap, type->flags & RUBY_FL_WB_PROTECTED, sizeof(RVALUE));
 }
+
+COMPILER_WARNING_POP
 
 VALUE
 rb_data_typed_object_zalloc(VALUE klass, size_t size, const rb_data_type_t *type)
@@ -4246,21 +4253,10 @@ is_id_value(rb_objspace_t *objspace, VALUE ptr)
 }
 
 static inline int
-heap_is_swept_object(rb_objspace_t *objspace, VALUE ptr)
+is_swept_object(rb_objspace_t *objspace, VALUE ptr)
 {
     struct heap_page *page = GET_HEAP_PAGE(ptr);
     return page->flags.before_sweep ? FALSE : TRUE;
-}
-
-static inline int
-is_swept_object(rb_objspace_t *objspace, VALUE ptr)
-{
-    if (heap_is_swept_object(objspace, ptr)) {
-	return TRUE;
-    }
-    else {
-	return FALSE;
-    }
 }
 
 /* garbage objects will be collected soon. */
@@ -10456,8 +10452,8 @@ gc_info_decode(rb_objspace_t *objspace, const VALUE hash_or_key, const unsigned 
         Qnil
     );
 
-    SET(have_finalizer, (flags & GPR_FLAG_HAVE_FINALIZE) ? Qtrue : Qfalse);
-    SET(immediate_sweep, (flags & GPR_FLAG_IMMEDIATE_SWEEP) ? Qtrue : Qfalse);
+    SET(have_finalizer, RBOOL(flags & GPR_FLAG_HAVE_FINALIZE));
+    SET(immediate_sweep, RBOOL(flags & GPR_FLAG_IMMEDIATE_SWEEP));
 
     if (orig_flags == 0) {
         SET(state, gc_mode(objspace) == gc_mode_none ? sym_none :
@@ -12743,7 +12739,7 @@ gc_profile_record_get(VALUE _)
 	rb_hash_aset(prof, ID2SYM(rb_intern("REMOVING_OBJECTS")), SIZET2NUM(record->removing_objects));
 	rb_hash_aset(prof, ID2SYM(rb_intern("EMPTY_OBJECTS")), SIZET2NUM(record->empty_objects));
 
-	rb_hash_aset(prof, ID2SYM(rb_intern("HAVE_FINALIZE")), (record->flags & GPR_FLAG_HAVE_FINALIZE) ? Qtrue : Qfalse);
+	rb_hash_aset(prof, ID2SYM(rb_intern("HAVE_FINALIZE")), RBOOL(record->flags & GPR_FLAG_HAVE_FINALIZE));
 #endif
 
 #if RGENGC_PROFILE > 0
@@ -13564,7 +13560,7 @@ Init_GC(void)
     rb_mGC = rb_define_module("GC");
 
     gc_constants = rb_hash_new();
-    rb_hash_aset(gc_constants, ID2SYM(rb_intern("DEBUG")), GC_DEBUG ? Qtrue : Qfalse);
+    rb_hash_aset(gc_constants, ID2SYM(rb_intern("DEBUG")), RBOOL(GC_DEBUG));
     rb_hash_aset(gc_constants, ID2SYM(rb_intern("RVALUE_SIZE")), SIZET2NUM(sizeof(RVALUE)));
     rb_hash_aset(gc_constants, ID2SYM(rb_intern("HEAP_PAGE_OBJ_LIMIT")), SIZET2NUM(HEAP_PAGE_OBJ_LIMIT));
     rb_hash_aset(gc_constants, ID2SYM(rb_intern("HEAP_PAGE_BITMAP_SIZE")), SIZET2NUM(HEAP_PAGE_BITMAP_SIZE));

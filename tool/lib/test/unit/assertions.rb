@@ -303,5 +303,10 @@ EOT
         template.gsub(/\G((?:[^\\]|\\.)*?)(\\)?\?/) { $1 + ($2 ? "?" : mu_pp(arguments.shift)) }
       end
     end
+
+    # Compatibility hack for assert_raise
+    AssertionFailedError = MiniTest::Assertion
+    PendedError = MiniTest::Skip
+
   end
 end
