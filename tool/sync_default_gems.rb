@@ -380,7 +380,7 @@ def sync_default_gems_with_commits(gem, ranges, edit: nil)
       range = "#{range}~1..#{range}"
     end
 
-    IO.popen(%W"git log --format=%H,%s #{range}") do |f|
+    IO.popen(%W"git log --format=%H,%s #{range} --") do |f|
       f.read.split("\n").reverse.map{|commit| commit.split(',', 2)}
     end
   end
@@ -393,7 +393,7 @@ def sync_default_gems_with_commits(gem, ranges, edit: nil)
 
   if commits.empty?
     puts "No commits to pick"
-    return
+    return true
   end
 
   puts "Try to pick these commits:"
@@ -468,7 +468,9 @@ def sync_default_gems_with_commits(gem, ranges, edit: nil)
   unless failed_commits.empty?
     puts "---- failed commits ----"
     puts failed_commits
+    return false
   end
+  return true
 end
 
 def sync_lib(repo, upstream = nil)
@@ -577,9 +579,9 @@ else
   end
   gem = ARGV.shift
   if ARGV[0]
-    sync_default_gems_with_commits(gem, ARGV, edit: edit)
+    exit sync_default_gems_with_commits(gem, ARGV, edit: edit)
   elsif auto
-    sync_default_gems_with_commits(gem, true, edit: edit)
+    exit sync_default_gems_with_commits(gem, true, edit: edit)
   else
     sync_default_gems(gem)
   end

@@ -290,7 +290,6 @@ begin
     end
 
     def test_clear_multiline_and_autowrap
-      omit # FIXME clear logic is buggy
       start_terminal(10, 15, %W{ruby -I#{@pwd}/lib #{@pwd}/test/reline/yamatanooroti/multiline_repl}, startup_message: 'Multiline REPL.')
       write("def aaaaaa\n  3\n\C-lend")
       close
@@ -806,6 +805,33 @@ begin
       assert_screen(<<~'EOC')
         Multiline REPL.
         prompt> aaa Ybbb Xccc ddd
+      EOC
+    end
+
+    def test_completion_journey_2nd_line
+      write_inputrc <<~LINES
+        set editing-mode vi
+      LINES
+      start_terminal(10, 50, %W{ruby -I#{@pwd}/lib #{@pwd}/test/reline/yamatanooroti/multiline_repl --complete}, startup_message: 'Multiline REPL.')
+      write("def hoge\n  S\C-n")
+      close
+      assert_screen(<<~'EOC')
+        Multiline REPL.
+        prompt> def hoge
+        prompt>   String
+      EOC
+    end
+
+    def test_completion_journey_with_empty_line
+      write_inputrc <<~LINES
+        set editing-mode vi
+      LINES
+      start_terminal(10, 50, %W{ruby -I#{@pwd}/lib #{@pwd}/test/reline/yamatanooroti/multiline_repl --complete}, startup_message: 'Multiline REPL.')
+      write("\C-n\C-p")
+      close
+      assert_screen(<<~'EOC')
+        Multiline REPL.
+        prompt>
       EOC
     end
 
