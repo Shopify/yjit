@@ -2234,14 +2234,6 @@ rb_ary_set_len(VALUE ary, long len)
     ARY_SET_LEN(ary, len);
 }
 
-/*!
- * expands or shrinks \a ary to \a len elements.
- * expanded region will be filled with Qnil.
- * \param ary  an array
- * \param len  new size
- * \return     \a ary
- * \post       the size of \a ary is \a len.
- */
 VALUE
 rb_ary_resize(VALUE ary, long len)
 {
@@ -4845,6 +4837,7 @@ ary_append(VALUE x, VALUE y)
     if (n > 0) {
         rb_ary_splice(x, RARRAY_LEN(x), 0, RARRAY_CONST_PTR_TRANSIENT(y), n);
     }
+    RB_GC_GUARD(y);
     return x;
 }
 
@@ -5921,8 +5914,7 @@ ary_min_opt_string(VALUE ary, long i, VALUE vmin)
  *
  *  With an argument +n+ and a block, returns a new \Array with at most +n+ elements,
  *  in ascending order per the block:
- *    [0, 1, 2, 3].min(3) # => [0, 1, 2]
- *    [0, 1, 2, 3].min(6) # => [0, 1, 2, 3]
+ *    ['0', '00', '000'].min(2) {|a, b| a.size <=> b.size } # => ["0", "00"]
  */
 static VALUE
 rb_ary_min(int argc, VALUE *argv, VALUE ary)

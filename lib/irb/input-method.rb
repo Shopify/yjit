@@ -314,20 +314,34 @@ module IRB
     end
 
     SHOW_DOC_DIALOG = ->() {
+      dialog.trap_key = nil
+      alt_d = [
+        [Reline::Key.new(nil, 0xE4, true)], # Normal Alt+d.
+        [195, 164] # The "ä" that appears when Alt+d is pressed on xterm.
+      ]
       begin
         require 'rdoc'
       rescue LoadError
         return nil
       end
+
       if just_cursor_moving and completion_journey_data.nil?
         return nil
       end
-      cursor_pos_to_render, result, pointer = context.pop(3)
-      return nil if result.nil? or pointer.nil?
+      cursor_pos_to_render, result, pointer, autocomplete_dialog = context.pop(4)
+      return nil if result.nil? or pointer.nil? or pointer < 0
       name = result[pointer]
       name = IRB::InputCompletor.retrieve_completion_data(name, doc_namespace: true)
 
       driver = RDoc::RI::Driver.new
+
+      if key.match?(dialog.name)
+        begin
+          driver.display_names([name])
+        rescue RDoc::RI::Driver::NotFoundError
+        end
+      end
+
       begin
         name = driver.expand_name(name)
       rescue RDoc::RI::Driver::NotFoundError
@@ -355,11 +369,17 @@ module IRB
         end
       end
       return nil if doc.nil?
+      width = 40
       formatter = RDoc::Markup::ToAnsi.new
-      formatter.width = 40
-      str = doc.accept(formatter)
+      formatter.width = width
+      dialog.trap_key = alt_d
+      message = 'Press Alt+d to read the full document'
+      contents = [message] + doc.accept(formatter).split("\n")
 
-      [Reline::CursorPos.new(cursor_pos_to_render.x + 40, cursor_pos_to_render.y + pointer), str.split("\n"), nil, '49']
+      x = cursor_pos_to_render.x + autocomplete_dialog.width
+      x = autocomplete_dialog.column - width if x + width >= screen_width
+      y = cursor_pos_to_render.y
+      DialogRenderInfo.new(pos: Reline::CursorPos.new(x, y), contents: contents, width: width, bg_color: '49')
     }
 
     # Reads the next line from this input method.

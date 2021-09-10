@@ -16,8 +16,28 @@ module Reline
 
   class ConfigEncodingConversionError < StandardError; end
 
-  Key = Struct.new('Key', :char, :combined_char, :with_meta)
+  Key = Struct.new('Key', :char, :combined_char, :with_meta) do
+    def match?(key)
+      if key.instance_of?(Reline::Key)
+        (key.char.nil? or char.nil? or char == key.char) and
+        (key.combined_char.nil? or combined_char.nil? or combined_char == key.combined_char) and
+        (key.with_meta.nil? or with_meta.nil? or with_meta == key.with_meta)
+      elsif key.is_a?(Integer) or key.is_a?(Symbol)
+        if not combined_char.nil? and combined_char == key
+          true
+        elsif combined_char.nil? and not char.nil? and char == key
+          true
+        else
+          false
+        end
+      else
+        false
+      end
+    end
+    alias_method :==, :match?
+  end
   CursorPos = Struct.new(:x, :y)
+  DialogRenderInfo = Struct.new(:pos, :contents, :bg_color, :width, :height, :scrollbar, keyword_init: true)
 
   class Core
     ATTR_READER_NAMES = %i(
@@ -193,8 +213,8 @@ module Reline
         # Auto complete starts only when edited
         return nil
       end
-      pre, target, post= retrieve_completion_block(true)
-      if target.nil? or target.empty?# or target.size <= 3
+      pre, target, post = retrieve_completion_block(true)
+      if target.nil? or target.empty? or (completion_journey_data&.pointer == -1 and target.size <= 3)
         return nil
       end
       if completion_journey_data and completion_journey_data.list
@@ -205,7 +225,7 @@ module Reline
         result = call_completion_proc_with_checking_args(pre, target, post)
         pointer = nil
       end
-      if result and result.size == 1 and result[0] == target
+      if result and result.size == 1 and result[0] == target and pointer != 0
         result = nil
       end
       target_width = Reline::Unicode.calculate_width(target)
@@ -219,9 +239,10 @@ module Reline
       cursor_pos_to_render = Reline::CursorPos.new(x, y)
       if context and context.is_a?(Array)
         context.clear
-        context.push(cursor_pos_to_render, result, pointer)
+        context.push(cursor_pos_to_render, result, pointer, dialog)
       end
-      [cursor_pos_to_render, result, pointer, nil]
+      dialog.pointer = pointer
+      DialogRenderInfo.new(pos: cursor_pos_to_render, contents: result, scrollbar: true, height: 15)
     }
     Reline::DEFAULT_DIALOG_CONTEXT = Array.new
 
@@ -361,25 +382,9 @@ module Reline
           break
         when :matching
           if buffer.size == 1
-            begin
-              succ_c = nil
-              Timeout.timeout(keyseq_timeout / 1000.0) {
-                succ_c = Reline::IOGate.getc
-              }
-            rescue Timeout::Error # cancel matching only when first byte
-              block.([Reline::Key.new(c, c, false)])
-              break
-            else
-              if key_stroke.match_status(buffer.dup.push(succ_c)) == :unmatched
-                if c == "\e".ord
-                  block.([Reline::Key.new(succ_c, succ_c | 0b10000000, true)])
-                else
-                  block.([Reline::Key.new(c, c, false), Reline::Key.new(succ_c, succ_c, false)])
-                end
-                break
-              else
-                Reline::IOGate.ungetc(succ_c)
-              end
+            case read_2nd_character_of_key_sequence(keyseq_timeout, buffer, c, block)
+            when :break then break
+            when :next  then next
             end
           end
         when :unmatched
@@ -392,6 +397,38 @@ module Reline
             block.(expanded)
           end
           break
+        end
+      end
+    end
+
+    private def read_2nd_character_of_key_sequence(keyseq_timeout, buffer, c, block)
+      begin
+        succ_c = nil
+        Timeout.timeout(keyseq_timeout / 1000.0) {
+          succ_c = Reline::IOGate.getc
+        }
+      rescue Timeout::Error # cancel matching only when first byte
+        block.([Reline::Key.new(c, c, false)])
+        return :break
+      else
+        case key_stroke.match_status(buffer.dup.push(succ_c))
+        when :unmatched
+          if c == "\e".ord
+            block.([Reline::Key.new(succ_c, succ_c | 0b10000000, true)])
+          else
+            block.([Reline::Key.new(c, c, false), Reline::Key.new(succ_c, succ_c, false)])
+          end
+          return :break
+        when :matching
+          Reline::IOGate.ungetc(succ_c)
+          return :next
+        when :matched
+          buffer << succ_c
+          expanded = key_stroke.expand(buffer).map{ |expanded_c|
+            Reline::Key.new(expanded_c, expanded_c, false)
+          }
+          block.(expanded)
+          return :break
         end
       end
     end
@@ -447,7 +484,7 @@ module Reline
   #--------------------------------------------------------
 
   (Core::ATTR_READER_NAMES).each { |name|
-    def_single_delegators :core, "#{name}", "#{name}="
+    def_single_delegators :core, :"#{name}", :"#{name}="
   }
   def_single_delegators :core, :input=, :output=
   def_single_delegators :core, :vi_editing_mode, :emacs_editing_mode
