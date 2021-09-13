@@ -1,7 +1,6 @@
 #ifndef RUBY_MISSING_H                               /*-*-C++-*-vi:se ft=cpp:*/
 #define RUBY_MISSING_H 1
 /**
- * @file
  * @author     $Author$
  * @date       Sat May 11 23:46:03 JST 2002
  * @copyright  This  file  is   a  part  of  the   programming  language  Ruby.
@@ -39,6 +38,7 @@
 #endif
 
 #include "ruby/internal/dllexport.h"
+#include "ruby/internal/attr/format.h"
 
 #ifndef M_PI
 # define M_PI 3.14159265358979323846
@@ -212,6 +212,7 @@ RUBY_EXTERN int ruby_close(int);
 #endif
 
 #ifndef HAVE_SETPROCTITLE
+RBIMPL_ATTR_FORMAT(RBIMPL_PRINTF_FORMAT, 1, 2)
 RUBY_EXTERN void setproctitle(const char *fmt, ...);
 #endif
 
