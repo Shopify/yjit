@@ -142,6 +142,7 @@ jit_peek_at_self(jitstate_t *jit, ctx_t *ctx)
     return jit->ec->cfp->self;
 }
 
+RBIMPL_ATTR_MAYBE_UNUSED()
 static VALUE
 jit_peek_at_local(jitstate_t *jit, ctx_t *ctx, int n)
 {
@@ -192,7 +193,7 @@ jit_prepare_routine_call(jitstate_t *jit, ctx_t *ctx, x86opnd_t scratch_reg)
 }
 
 // Record the current codeblock write position for rewriting into a jump into
-// the outline block later. Used to implement global code invalidation.
+// the outlined block later. Used to implement global code invalidation.
 static void
 record_global_inval_patch(const codeblock_t *cb, uint32_t outline_block_target_pos)
 {
@@ -354,7 +355,7 @@ yjit_gen_exit(VALUE *exit_pc, ctx_t *ctx, codeblock_t *cb)
     // Update the CFP on the EC
     mov(cb, member_opnd(REG_EC, rb_execution_context_t, cfp), REG_CFP);
 
-    // Put PC into the return register, which the post call bytes dispatches to
+    // Update CFP->PC
     mov(cb, RAX, const_ptr_opnd(exit_pc));
     mov(cb, member_opnd(REG_CFP, rb_control_frame_t, pc), RAX);
 
@@ -397,12 +398,27 @@ yjit_gen_leave_exit(codeblock_t *cb)
     return code_ptr;
 }
 
-// A shorthand for generating an exit in the outline block
+// :side-exit:
+// Get an exit for the current instruction in the outlined block. The code
+// for each instruction often begins with several guards before proceeding
+// to do work. When guards fail, an option we have is to exit to the
+// interpreter at an instruction boundary. The piece of code that takes
+// care of reconstructing interpreter state and exiting out of generated
+// code is called the side exit.
+//
+// No guards change the logic for reconstructing interpreter state at the
+// moment, so there is one unique side exit for each context. Note that
+// it's incorrect to jump to the side exit after any ctx stack push/pop operations
+// since they change the logic required for reconstructing interpreter state.
 static uint8_t *
 yjit_side_exit(jitstate_t *jit, ctx_t *ctx)
 {
-    uint32_t pos = yjit_gen_exit(jit->pc, ctx, ocb);
-    return cb_get_ptr(ocb, pos);
+    if (!jit->side_exit_for_pc) {
+        uint32_t pos = yjit_gen_exit(jit->pc, ctx, ocb);
+        jit->side_exit_for_pc = cb_get_ptr(ocb, pos);
+    }
+
+    return jit->side_exit_for_pc;
 }
 
 // Generate a runtime guard that ensures the PC is at the start of the iseq,
@@ -637,8 +653,9 @@ yjit_gen_block(block_t *block, rb_execution_context_t *ec)
 
         // Set the current instruction
         jit.insn_idx = insn_idx;
-        jit.pc = pc;
         jit.opcode = opcode;
+        jit.pc = pc;
+        jit.side_exit_for_pc = NULL;
 
         // If previous instruction requested to record the boundary
         if (jit.record_boundary_patch_point) {
@@ -985,7 +1002,7 @@ gen_expandarray(jitstate_t* jit, ctx_t* ctx)
 
     // num is the number of requested values. If there aren't enough in the
     // array then we're going to push on nils.
-    rb_num_t num = (rb_num_t) jit_get_arg(jit, 0);
+    int num = (int)jit_get_arg(jit, 0);
     val_type_t array_type = ctx_get_opnd_type(ctx, OPND_STACK(0));
     x86opnd_t array_opnd = ctx_stack_pop(ctx, 1);
 
@@ -1926,7 +1943,8 @@ gen_equality_specialized(jitstate_t* jit, ctx_t* ctx, uint8_t *side_exit)
 
     if (FIXNUM_P(comptime_a) && FIXNUM_P(comptime_b)) {
         if (!assume_bop_not_redefined(jit->block, INTEGER_REDEFINED_OP_FLAG, BOP_EQ)) {
-            return YJIT_CANT_COMPILE;
+            // if overridden, emit the generic version
+            return false;
         }
 
         guard_two_fixnums(ctx, side_exit);
@@ -1945,9 +1963,10 @@ gen_equality_specialized(jitstate_t* jit, ctx_t* ctx, uint8_t *side_exit)
 
         return true;
     } else if (CLASS_OF(comptime_a) == rb_cString &&
-		    CLASS_OF(comptime_b) == rb_cString) {
+            CLASS_OF(comptime_b) == rb_cString) {
         if (!assume_bop_not_redefined(jit->block, STRING_REDEFINED_OP_FLAG, BOP_EQ)) {
-            return YJIT_CANT_COMPILE;
+            // if overridden, emit the generic version
+            return false;
         }
 
         // Load a and b in preparation for call later
