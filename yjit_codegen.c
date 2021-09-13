@@ -1446,118 +1446,56 @@ enum {
     SEND_MAX_DEPTH = 5,           // up to 5 different classes
 };
 
-/*
+static uint32_t
+yjit_force_iv_index(VALUE comptime_receiver, VALUE klass, ID name)
+{
+    ID id = name;
+    struct rb_iv_index_tbl_entry *ent;
+    struct st_table *iv_index_tbl = ROBJECT_IV_INDEX_TBL(comptime_receiver);
+
+    // Make sure there is a mapping for this ivar in the index table
+    if (!iv_index_tbl || !rb_iv_index_tbl_lookup(iv_index_tbl, id, &ent)) {
+        rb_ivar_set(comptime_receiver, id, Qundef);
+        iv_index_tbl = ROBJECT_IV_INDEX_TBL(comptime_receiver);
+        RUBY_ASSERT(iv_index_tbl);
+        // Redo the lookup
+        RUBY_ASSERT_ALWAYS(rb_iv_index_tbl_lookup(iv_index_tbl, id, &ent));
+    }
+
+    return ent->index;
+}
+
+VALUE rb_vm_set_ivar_idx(VALUE obj, uint32_t idx, VALUE val);
+
 // Codegen for setting an instance variable.
 // Preconditions:
 //   - receiver is in REG0
 //   - receiver has the same class as CLASS_OF(comptime_receiver)
 //   - no stack push or pops to ctx since the entry to the codegen of the instruction being compiled
 static codegen_status_t
-gen_set_ivar(jitstate_t *jit, ctx_t *ctx, const int max_chain_depth, VALUE comptime_receiver, ID ivar_name, insn_opnd_t reg0_opnd, uint8_t *side_exit)
+gen_set_ivar(jitstate_t *jit, ctx_t *ctx, VALUE recv, VALUE klass, ID ivar_name)
 {
-    VALUE comptime_val_klass = CLASS_OF(comptime_receiver);
-    const ctx_t starting_context = *ctx; // make a copy for use with jit_chain_guard
+    // Save the PC and SP because the callee may allocate
+    // Note that this modifies REG_SP, which is why we do it first
+    jit_prepare_routine_call(jit, ctx, REG0);
 
-    // If the class uses the default allocator, instances should all be T_OBJECT
-    // NOTE: This assumes nobody changes the allocator of the class after allocation.
-    //       Eventually, we can encode whether an object is T_OBJECT or not
-    //       inside object shapes.
-    if (rb_get_alloc_func(comptime_val_klass) != rb_class_allocate_instance) {
-        GEN_COUNTER_INC(cb, setivar_not_object);
-        return YJIT_CANT_COMPILE;
-    }
-    RUBY_ASSERT(BUILTIN_TYPE(comptime_receiver) == T_OBJECT); // because we checked the allocator
+    // Get the operands from the stack
+    x86opnd_t val_opnd = ctx_stack_pop(ctx, 1);
+    x86opnd_t recv_opnd = ctx_stack_pop(ctx, 1);
 
-    // ID for the name of the ivar
-    ID id = ivar_name;
-    struct rb_iv_index_tbl_entry *ent;
-    struct st_table *iv_index_tbl = ROBJECT_IV_INDEX_TBL(comptime_receiver);
+    uint32_t ivar_index = yjit_force_iv_index(recv, klass, ivar_name);
 
-    // Lookup index for the ivar the instruction loads
-    if (iv_index_tbl && rb_iv_index_tbl_lookup(iv_index_tbl, id, &ent)) {
-        uint32_t ivar_index = ent->index;
+    // Call rb_vm_set_ivar_idx with the receiver, the index of the ivar, and the value
+    mov(cb, C_ARG_REGS[0], recv_opnd);
+    mov(cb, C_ARG_REGS[1], imm_opnd(ivar_index));
+    mov(cb, C_ARG_REGS[2], val_opnd);
+    call_ptr(cb, REG0, (void *)rb_vm_set_ivar_idx);
 
-        val_type_t val_type = ctx_get_opnd_type(ctx, OPND_STACK(0));
-        x86opnd_t val_to_write = ctx_stack_opnd(ctx, 0);
-        mov(cb, REG1, val_to_write);
+    x86opnd_t out_opnd = ctx_stack_push(ctx, TYPE_UNKNOWN);
+    mov(cb, out_opnd, RAX);
 
-        // Bail if the value to write is a heap object, because this needs a write barrier
-        if (!val_type.is_imm) {
-            ADD_COMMENT(cb, "guard value is immediate");
-            test(cb, REG1, imm_opnd(RUBY_IMMEDIATE_MASK));
-            jz_ptr(cb, COUNTED_EXIT(side_exit, setivar_val_heapobject));
-            ctx_upgrade_opnd_type(ctx, OPND_STACK(0), TYPE_IMM);
-        }
-
-        // Pop the value to write
-        ctx_stack_pop(ctx, 1);
-
-        // Bail if this object is frozen
-        ADD_COMMENT(cb, "guard self is not frozen");
-        x86opnd_t flags_opnd = member_opnd(REG0, struct RBasic, flags);
-        test(cb, flags_opnd, imm_opnd(RUBY_FL_FREEZE));
-        jnz_ptr(cb, COUNTED_EXIT(side_exit, setivar_frozen));
-
-        // Pop receiver if it's on the temp stack
-        if (!reg0_opnd.is_self) {
-            (void)ctx_stack_pop(ctx, 1);
-        }
-
-        // Compile time self is embedded and the ivar index lands within the object
-        if (RB_FL_TEST_RAW(comptime_receiver, ROBJECT_EMBED) && ivar_index < ROBJECT_EMBED_LEN_MAX) {
-            // See ROBJECT_IVPTR() from include/ruby/internal/core/robject.h
-
-            // Guard that self is embedded
-            // TODO: BT and JC is shorter
-            ADD_COMMENT(cb, "guard embedded setivar");
-            test(cb, flags_opnd, imm_opnd(ROBJECT_EMBED));
-            jit_chain_guard(JCC_JZ, jit, &starting_context, max_chain_depth, side_exit);
-
-            // Store the ivar on the object
-            x86opnd_t ivar_opnd = mem_opnd(64, REG0, offsetof(struct RObject, as.ary) + ivar_index * SIZEOF_VALUE);
-            mov(cb, ivar_opnd, REG1);
-
-            // Push the ivar on the stack
-            // For attr_writer we'll need to push the value on the stack
-            //x86opnd_t out_opnd = ctx_stack_push(ctx, TYPE_UNKNOWN);
-        }
-        else {
-            // Compile time value is *not* embeded.
-
-            // Guard that value is *not* embedded
-            // See ROBJECT_IVPTR() from include/ruby/internal/core/robject.h
-            ADD_COMMENT(cb, "guard extended setivar");
-            x86opnd_t flags_opnd = member_opnd(REG0, struct RBasic, flags);
-            test(cb, flags_opnd, imm_opnd(ROBJECT_EMBED));
-            jit_chain_guard(JCC_JNZ, jit, &starting_context, max_chain_depth, side_exit);
-
-            // check that the extended table is big enough
-            if (ivar_index >= ROBJECT_EMBED_LEN_MAX + 1) {
-                // Check that the slot is inside the extended table (num_slots > index)
-                ADD_COMMENT(cb, "check index in extended table");
-                x86opnd_t num_slots = mem_opnd(32, REG0, offsetof(struct RObject, as.heap.numiv));
-                cmp(cb, num_slots, imm_opnd(ivar_index));
-                jle_ptr(cb, COUNTED_EXIT(side_exit, setivar_idx_out_of_range));
-            }
-
-            // Get a pointer to the extended table
-            x86opnd_t tbl_opnd = mem_opnd(64, REG0, offsetof(struct RObject, as.heap.ivptr));
-            mov(cb, REG0, tbl_opnd);
-
-            // Write the ivar to the extended table
-            x86opnd_t ivar_opnd = mem_opnd(64, REG0, sizeof(VALUE) * ivar_index);
-            mov(cb, ivar_opnd, REG1);
-        }
-
-        // Jump to next instruction. This allows guard chains to share the same successor.
-        jit_jump_to_next_insn(jit, ctx);
-        return YJIT_END_BLOCK;
-    }
-
-    GEN_COUNTER_INC(cb, setivar_name_not_mapped);
-    return YJIT_CANT_COMPILE;
+    return YJIT_KEEP_COMPILING;
 }
-*/
 
 // Codegen for getting an instance variable.
 // Preconditions:
@@ -1616,21 +1554,7 @@ gen_get_ivar(jitstate_t *jit, ctx_t *ctx, const int max_chain_depth, VALUE compt
     jit_chain_guard(JCC_JNE, jit, &starting_context, max_chain_depth, side_exit);
     */
 
-    // ID for the name of the ivar
-    ID id = ivar_name;
-    struct rb_iv_index_tbl_entry *ent;
-    struct st_table *iv_index_tbl = ROBJECT_IV_INDEX_TBL(comptime_receiver);
-
-    // Make sure there is a mapping for this ivar in the index table
-    if (!iv_index_tbl || !rb_iv_index_tbl_lookup(iv_index_tbl, id, &ent)) {
-        rb_ivar_set(comptime_receiver, id, Qundef);
-        iv_index_tbl = ROBJECT_IV_INDEX_TBL(comptime_receiver);
-        RUBY_ASSERT(iv_index_tbl);
-        // Redo the lookup
-        RUBY_ASSERT_ALWAYS(rb_iv_index_tbl_lookup(iv_index_tbl, id, &ent));
-    }
-
-    uint32_t ivar_index = ent->index;
+    uint32_t ivar_index = yjit_force_iv_index(comptime_receiver, CLASS_OF(comptime_receiver), ivar_name);
 
     // Pop receiver if it's on the temp stack
     if (!reg0_opnd.is_self) {
@@ -2019,7 +1943,8 @@ gen_equality_specialized(jitstate_t* jit, ctx_t* ctx, uint8_t *side_exit)
 
     if (FIXNUM_P(comptime_a) && FIXNUM_P(comptime_b)) {
         if (!assume_bop_not_redefined(jit->block, INTEGER_REDEFINED_OP_FLAG, BOP_EQ)) {
-            return YJIT_CANT_COMPILE;
+            // if overridden, emit the generic version
+            return false;
         }
 
         guard_two_fixnums(ctx, side_exit);
@@ -2038,9 +1963,10 @@ gen_equality_specialized(jitstate_t* jit, ctx_t* ctx, uint8_t *side_exit)
 
         return true;
     } else if (CLASS_OF(comptime_a) == rb_cString &&
-		    CLASS_OF(comptime_b) == rb_cString) {
+            CLASS_OF(comptime_b) == rb_cString) {
         if (!assume_bop_not_redefined(jit->block, STRING_REDEFINED_OP_FLAG, BOP_EQ)) {
-            return YJIT_CANT_COMPILE;
+            // if overridden, emit the generic version
+            return false;
         }
 
         // Load a and b in preparation for call later
@@ -3578,7 +3504,13 @@ gen_send_general(jitstate_t *jit, ctx_t *ctx, struct rb_call_data *cd, rb_iseq_t
             }
         case VM_METHOD_TYPE_ATTRSET:
             GEN_COUNTER_INC(cb, send_ivar_set_method);
-            return YJIT_CANT_COMPILE;
+
+            if (argc != 1 || !RB_TYPE_P(comptime_recv, T_OBJECT)) {
+                return YJIT_CANT_COMPILE;
+            } else {
+                ID ivar_name = cme->def->body.attr.id;
+                return gen_set_ivar(jit, ctx, comptime_recv, comptime_recv_klass, ivar_name);
+            }
         case VM_METHOD_TYPE_BMETHOD:
             GEN_COUNTER_INC(cb, send_bmethod);
             return YJIT_CANT_COMPILE;
@@ -3888,6 +3820,77 @@ gen_toregexp(jitstate_t* jit, ctx_t* ctx)
     call_ptr(cb, REG0, (void *)&rb_ary_clear);
 
     return YJIT_KEEP_COMPILING;
+}
+
+static codegen_status_t
+gen_getspecial(jitstate_t *jit, ctx_t *ctx)
+{
+    // This takes two arguments, key and type
+    // key is only used when type == 0
+    // A non-zero type determines which type of backref to fetch
+    rb_num_t key = jit_get_arg(jit, 0);
+    rb_num_t type = jit_get_arg(jit, 1);
+
+    if (type == 0) {
+        // not yet implemented
+        return YJIT_CANT_COMPILE;
+    } else if (type & 0x01) {
+        // Fetch a "special" backref based on a char encoded by shifting by 1
+
+        // Can raise if matchdata uninitialized
+        jit_prepare_routine_call(jit, ctx, REG0);
+
+        // call rb_backref_get()
+        ADD_COMMENT(cb, "rb_backref_get");
+        call_ptr(cb, REG0, (void *)rb_backref_get);
+        mov(cb, C_ARG_REGS[0], RAX);
+
+        switch (type >> 1) {
+            case '&':
+                ADD_COMMENT(cb, "rb_reg_last_match");
+                call_ptr(cb, REG0, (void *)rb_reg_last_match);
+                break;
+            case '`':
+                ADD_COMMENT(cb, "rb_reg_match_pre");
+                call_ptr(cb, REG0, (void *)rb_reg_match_pre);
+                break;
+            case '\'':
+                ADD_COMMENT(cb, "rb_reg_match_post");
+                call_ptr(cb, REG0, (void *)rb_reg_match_post);
+                break;
+            case '+':
+                ADD_COMMENT(cb, "rb_reg_match_last");
+                call_ptr(cb, REG0, (void *)rb_reg_match_last);
+                break;
+            default:
+                rb_bug("invalid back-ref");
+        }
+
+        x86opnd_t stack_ret = ctx_stack_push(ctx, TYPE_UNKNOWN);
+        mov(cb, stack_ret, RAX);
+
+        return YJIT_KEEP_COMPILING;
+    } else {
+        // Fetch the N-th match from the last backref based on type shifted by 1
+
+        // Can raise if matchdata uninitialized
+        jit_prepare_routine_call(jit, ctx, REG0);
+
+        // call rb_backref_get()
+        ADD_COMMENT(cb, "rb_backref_get");
+        call_ptr(cb, REG0, (void *)rb_backref_get);
+
+        // rb_reg_nth_match((int)(type >> 1), backref);
+        ADD_COMMENT(cb, "rb_reg_nth_match");
+        mov(cb, C_ARG_REGS[0], imm_opnd(type >> 1));
+        mov(cb, C_ARG_REGS[1], RAX);
+        call_ptr(cb, REG0, (void *)rb_reg_nth_match);
+
+        x86opnd_t stack_ret = ctx_stack_push(ctx, TYPE_UNKNOWN);
+        mov(cb, stack_ret, RAX);
+
+        return YJIT_KEEP_COMPILING;
+    }
 }
 
 static codegen_status_t
@@ -4241,6 +4244,7 @@ yjit_init_codegen(void)
     yjit_reg_op(BIN(setglobal), gen_setglobal);
     yjit_reg_op(BIN(tostring), gen_tostring);
     yjit_reg_op(BIN(toregexp), gen_toregexp);
+    yjit_reg_op(BIN(getspecial), gen_getspecial);
 
     yjit_method_codegen_table = st_init_numtable();
 

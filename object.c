@@ -41,19 +41,19 @@
 #include "builtin.h"
 
 /*!
- * \defgroup object Core objects and their operations
+ * \addtogroup object
  * \{
  */
 
-VALUE rb_cBasicObject; /*!< BasicObject class */
-VALUE rb_mKernel; /*!< Kernel module */
-VALUE rb_cObject; /*!< Object class */
-VALUE rb_cModule; /*!< Module class */
-VALUE rb_cClass; /*!< Class class */
+VALUE rb_cBasicObject;
+VALUE rb_mKernel;
+VALUE rb_cObject;
+VALUE rb_cModule;
+VALUE rb_cClass;
 
-VALUE rb_cNilClass; /*!< NilClass class */
-VALUE rb_cTrueClass; /*!< TrueClass class */
-VALUE rb_cFalseClass; /*!< FalseClass class */
+VALUE rb_cNilClass;
+VALUE rb_cTrueClass;
+VALUE rb_cFalseClass;
 
 static VALUE rb_cNilClass_to_s;
 static VALUE rb_cTrueClass_to_s;
@@ -77,18 +77,6 @@ static VALUE rb_cFalseClass_to_s;
 
 /*! \endcond */
 
-/*!
- * Make the object invisible from Ruby code.
- *
- * It is useful to let Ruby's GC manage your internal data structure --
- * The object keeps being managed by GC, but \c ObjectSpace.each_object
- * never yields the object.
- *
- * Note that the object also lose a way to call a method on it.
- *
- * \param[in] obj a Ruby object
- * \sa rb_obj_reveal
- */
 VALUE
 rb_obj_hide(VALUE obj)
 {
@@ -98,14 +86,6 @@ rb_obj_hide(VALUE obj)
     return obj;
 }
 
-/*!
- * Make a hidden object visible again.
- *
- * It is the caller's responsibility to pass the right \a klass
- * which \a obj originally used to belong to.
- *
- * \sa rb_obj_hide
- */
 VALUE
 rb_obj_reveal(VALUE obj, VALUE klass)
 {
@@ -115,14 +95,6 @@ rb_obj_reveal(VALUE obj, VALUE klass)
     return obj;
 }
 
-/*!
- * Fills common (\c RBasic) fields in \a obj.
- *
- * \note Prefer rb_newobj_of() to this function.
- * \param[in,out] obj a Ruby object to be set up.
- * \param[in] klass \c obj will belong to this class.
- * \param[in] type one of \c ruby_value_type
- */
 VALUE
 rb_obj_setup(VALUE obj, VALUE klass, VALUE type)
 {
@@ -143,17 +115,6 @@ rb_obj_setup(VALUE obj, VALUE klass, VALUE type)
     /* The default implementation of #=== is
      * to call #== with the rb_equal() optimization. */
 
-/*!
- * This function is an optimized version of calling #==.
- * It checks equality between two objects by first doing a fast
- * identity check using using C's == (same as BasicObject#equal?).
- * If that check fails, it calls #== dynamically.
- * This optimization actually affects semantics,
- * because when #== returns false for the same object obj,
- * rb_equal(obj, obj) would still return true.
- * This happens for Float::NAN, where Float::NAN == Float::NAN
- * is false, but rb_equal(Float::NAN, Float::NAN) is true.
- */
 VALUE
 rb_equal(VALUE obj1, VALUE obj2)
 {
@@ -167,15 +128,6 @@ rb_equal(VALUE obj1, VALUE obj2)
     return RBOOL(RTEST(result));
 }
 
-/**
- * Determines if \a obj1 and \a obj2 are equal in terms of
- * \c Object#eql?.
- *
- * \note It actually calls \c #eql? when necessary.
- *   So you cannot implement \c #eql? with this function.
- * \retval non-zero if they are eql?
- * \retval zero if they are not eql?.
- */
 int
 rb_eql(VALUE obj1, VALUE obj2)
 {
@@ -271,14 +223,6 @@ rb_obj_not_equal(VALUE obj1, VALUE obj2)
     return RTEST(result) ? Qfalse : Qtrue;
 }
 
-/*!
- * Looks up the nearest ancestor of \a cl, skipping singleton classes or
- * module inclusions.
- * It returns the \a cl itself if it is neither a singleton class or a module.
- *
- * \param[in] cl a Class object.
- * \return the ancestor class found, or Qfalse if nothing found.
- */
 VALUE
 rb_class_real(VALUE cl)
 {
@@ -506,12 +450,6 @@ mutable_obj_clone(VALUE obj, VALUE kwfreeze)
     return clone;
 }
 
-/**
- * :nodoc
- *--
- * Almost same as \c Object#clone
- *++
- */
 VALUE
 rb_obj_clone(VALUE obj)
 {
@@ -519,7 +457,7 @@ rb_obj_clone(VALUE obj)
     return mutable_obj_clone(obj, Qnil);
 }
 
-/**
+/*
  *  call-seq:
  *     obj.dup -> an_object
  *
@@ -557,9 +495,6 @@ rb_obj_clone(VALUE obj)
  *
  *	s3 = s1.dup #=> #<Klass:0x401c1084>
  *	s3.foo #=> NoMethodError: undefined method `foo' for #<Klass:0x401c1084>
- *--
- * Equivalent to \c Object\#dup in Ruby
- *++
  */
 VALUE
 rb_obj_dup(VALUE obj)
@@ -662,7 +597,7 @@ rb_obj_init_clone(int argc, VALUE *argv, VALUE obj)
     return obj;
 }
 
-/**
+/*
  *  call-seq:
  *     obj.to_s    -> string
  *
@@ -671,9 +606,6 @@ rb_obj_init_clone(int argc, VALUE *argv, VALUE obj)
  *  case, the top-level object that is the initial execution context
  *  of Ruby programs returns ``main''.
  *
- *--
- * Default implementation of \c #to_s.
- *++
  */
 VALUE
 rb_any_to_s(VALUE obj)
@@ -686,18 +618,6 @@ rb_any_to_s(VALUE obj)
     return str;
 }
 
-/*!
- * Convenient wrapper of \c Object#inspect.
- * Returns a human-readable string representation of \a obj,
- * similarly to \c Object#inspect.
- *
- * Unlike Ruby-level \c #inspect, it escapes characters to keep the
- * result compatible to the default internal or external encoding.
- * If the default internal or external encoding is ASCII compatible,
- * the encoding of the inspected result must be compatible with it.
- * If the default internal or external encoding is ASCII incompatible,
- * the result must be ASCII only.
- */
 VALUE
 rb_inspect(VALUE obj)
 {
@@ -812,7 +732,7 @@ class_or_module_required(VALUE c)
 
 static VALUE class_search_ancestor(VALUE cl, VALUE c);
 
-/**
+/*
  *  call-seq:
  *     obj.instance_of?(class)    -> true or false
  *
@@ -827,13 +747,6 @@ static VALUE class_search_ancestor(VALUE cl, VALUE c);
  *     b.instance_of? A   #=> false
  *     b.instance_of? B   #=> true
  *     b.instance_of? C   #=> false
- *--
- * Determines if \a obj is an instance of \a c.
- *
- * Equivalent to \c Object\#is_instance_of in Ruby.
- * \param[in] obj the object to be determined.
- * \param[in] c a Class object
- *++
  */
 
 VALUE
@@ -844,7 +757,7 @@ rb_obj_is_instance_of(VALUE obj, VALUE c)
 }
 
 
-/**
+/*
  *  call-seq:
  *     obj.is_a?(class)       -> true or false
  *     obj.kind_of?(class)    -> true or false
@@ -870,13 +783,6 @@ rb_obj_is_instance_of(VALUE obj, VALUE c)
  *     b.kind_of? B       #=> true
  *     b.kind_of? C       #=> false
  *     b.kind_of? M       #=> true
- *--
- * Determines if \a obj is a kind of \a c.
- *
- * Equivalent to \c Object\#kind_of? in Ruby.
- * \param[in] obj the object to be determined
- * \param[in] c a Module object.
- *++
  */
 
 VALUE
@@ -1191,7 +1097,7 @@ rb_obj_dummy1(VALUE _x, VALUE _y)
     return rb_obj_dummy();
 }
 
-/**
+/*
  *  call-seq:
  *     obj.tainted?    -> false
  *
@@ -1205,7 +1111,7 @@ rb_obj_tainted(VALUE obj)
     return Qfalse;
 }
 
-/**
+/*
  *  call-seq:
  *     obj.taint -> obj
  *
@@ -1220,7 +1126,7 @@ rb_obj_taint(VALUE obj)
 }
 
 
-/**
+/*
  *  call-seq:
  *     obj.untaint    -> obj
  *
@@ -1234,7 +1140,7 @@ rb_obj_untaint(VALUE obj)
     return obj;
 }
 
-/**
+/*
  *  call-seq:
  *     obj.untrusted?    -> false
  *
@@ -1248,7 +1154,7 @@ rb_obj_untrusted(VALUE obj)
     return Qfalse;
 }
 
-/**
+/*
  *  call-seq:
  *     obj.untrust -> obj
  *
@@ -1263,7 +1169,7 @@ rb_obj_untrust(VALUE obj)
 }
 
 
-/**
+/*
  *  call-seq:
  *     obj.trust    -> obj
  *
@@ -1277,17 +1183,13 @@ rb_obj_trust(VALUE obj)
     return obj;
 }
 
-/**
- * Does nothing. This method is deprecated and will be removed in Ruby 3.2.
- */
-
 void
 rb_obj_infect(VALUE victim, VALUE carrier)
 {
     rb_warn_deprecated_to_remove_at(3.2, "rb_obj_infect", NULL);
 }
 
-/**
+/*
  *  call-seq:
  *     obj.freeze    -> obj
  *
@@ -1309,11 +1211,6 @@ rb_obj_infect(VALUE victim, VALUE carrier)
  *
  *  Objects of the following classes are always frozen: Integer,
  *  Float, Symbol.
- *--
- * Make the object unmodifiable. Equivalent to \c Object\#freeze in Ruby.
- * \param[in,out] obj  the object to be frozen
- * \return the frozen object
- *++
  */
 
 VALUE
@@ -1752,7 +1649,7 @@ rb_mod_eqq(VALUE mod, VALUE arg)
     return rb_obj_is_kind_of(arg, mod);
 }
 
-/**
+/*
  * call-seq:
  *   mod <= other   ->  true, false, or nil
  *
@@ -1761,15 +1658,6 @@ rb_mod_eqq(VALUE mod, VALUE arg)
  * <code>nil</code> if there's no relationship between the two.
  * (Think of the relationship in terms of the class definition:
  * "class A < B" implies "A < B".)
- *--
- * Determines if \a mod inherits \a arg. Equivalent to \c Module\#<= in Ruby
- *
- * \param[in] mod a Module object
- * \param[in] arg another Module object or an iclass of a module
- * \retval Qtrue if \a mod inherits \a arg, or \a mod equals \a arg
- * \retval Qfalse if \a arg inherits \a mod
- * \retval Qnil if otherwise
- *++
  */
 
 VALUE
@@ -2080,20 +1968,6 @@ class_call_alloc_func(rb_alloc_func_t allocator, VALUE klass)
     return obj;
 }
 
-/**
- * Allocates an instance of \a klass
- *
- * \note It calls the allocator defined by {rb_define_alloc_func}.
- *   So you cannot use this function to define an allocator.
- *   Use {rb_newobj_of}, {TypedData_Make_Struct} or others, instead.
- * \note Usually prefer rb_class_new_instance to rb_obj_alloc and rb_obj_call_init
- * \param[in] klass a Class object
- * \sa rb_class_new_instance
- * \sa rb_obj_call_init
- * \sa rb_define_alloc_func
- * \sa rb_newobj_of
- * \sa TypedData_Make_Struct
- */
 VALUE
 rb_obj_alloc(VALUE klass)
 {
@@ -2135,18 +2009,6 @@ rb_class_new_instance_kw(int argc, const VALUE *argv, VALUE klass, int kw_splat)
     return obj;
 }
 
-/**
- * Allocates and initializes an instance of \a klass.
- *
- * Equivalent to \c Class\#new in Ruby
- *
- * \param[in] argc  the number of arguments to \c #initialize
- * \param[in] argv  a pointer to an array of arguments to \c #initialize
- * \param[in] klass a Class object
- * \return the new instance of \a klass
- * \sa rb_obj_call_init
- * \sa rb_obj_alloc
- */
 VALUE
 rb_class_new_instance(int argc, const VALUE *argv, VALUE klass)
 {
@@ -2204,13 +2066,6 @@ rb_class_superclass(VALUE klass)
     return super;
 }
 
-/**
- * Returns the superclass of \a klass
- * The return value might be an iclass of a module, unlike rb_class_superclass.
- *
- * Also it returns Qfalse when \a klass does not have a parent class.
- * \sa rb_class_superclass
- */
 VALUE
 rb_class_get_superclass(VALUE klass)
 {
@@ -3138,19 +2993,6 @@ conversion_mismatch(VALUE val, const char *tname, const char *method, VALUE resu
 	     cname, tname, cname, method, rb_obj_class(result));
 }
 
-/*!
- * Converts an object into another type.
- * Calls the specified conversion method if necessary.
- *
- * \param[in] val    the object to be converted
- * \param[in] type   a value of \c ruby_value_type
- * \param[in] tname  name of the target type.
- *   only used for error messages.
- * \param[in] method name of the method
- * \return an object of the specified type
- * \throw TypeError on failure
- * \sa rb_check_convert_type
- */
 VALUE
 rb_convert_type(VALUE val, int type, const char *tname, const char *method)
 {
@@ -3178,20 +3020,6 @@ rb_convert_type_with_id(VALUE val, int type, const char *tname, ID method)
     return v;
 }
 
-/*!
- * Tries to convert an object into another type.
- * Calls the specified conversion method if necessary.
- *
- * \param[in] val    the object to be converted
- * \param[in] type   a value of \c ruby_value_type
- * \param[in] tname  name of the target type.
- *   only used for error messages.
- * \param[in] method name of the method
- * \return an object of the specified type, or Qnil if no such conversion method defined.
- * \throw TypeError if the conversion method returns an unexpected type of value.
- * \sa rb_convert_type
- * \sa rb_check_convert_type_with_id
- */
 VALUE
 rb_check_convert_type(VALUE val, int type, const char *tname, const char *method)
 {
@@ -3244,16 +3072,6 @@ rb_to_integer_with_id_exception(VALUE val, const char *method, ID mid, int raise
 #define rb_to_integer(val, method, mid) \
     rb_to_integer_with_id_exception(val, method, mid, TRUE)
 
-/**
- * Tries to convert \a val into \c Integer.
- * It calls the specified conversion method if necessary.
- *
- * \param[in] val     a Ruby object
- * \param[in] method  a name of a method
- * \return an \c Integer object on success,
- *   or \c Qnil if no such conversion method defined.
- * \exception TypeError if the conversion method returns a non-Integer object.
- */
 VALUE
 rb_check_to_integer(VALUE val, const char *method)
 {
@@ -3267,29 +3085,12 @@ rb_check_to_integer(VALUE val, const char *method)
     return v;
 }
 
-/**
- * Converts \a val into \c Integer.
- * It calls \a #to_int method if necessary.
- *
- * \param[in] val a Ruby object
- * \return an \c Integer object
- * \exception TypeError on failure
- */
 VALUE
 rb_to_int(VALUE val)
 {
     return rb_to_integer(val, "to_int", idTo_int);
 }
 
-/**
- * Tries to convert \a val into Integer.
- * It calls \c #to_int method if necessary.
- *
- * \param[in] val a Ruby object
- * \return an Integer object on success,
- *   or \c Qnil if \c #to_int is not defined.
- * \exception TypeError if \c #to_int returns a non-Integer object.
- */
 VALUE
 rb_check_to_int(VALUE val)
 {
@@ -3356,12 +3157,6 @@ rb_convert_to_integer(VALUE val, int base, int raise_exception)
     return rb_to_integer(val, "to_i", idTo_i);
 }
 
-/**
- * Equivalent to \c Kernel\#Integer in Ruby.
- *
- * Converts \a val into \c Integer in a slightly more strict manner
- * than \c #to_i.
- */
 VALUE
 rb_Integer(VALUE val)
 {
@@ -3576,17 +3371,6 @@ rb_cstr_to_dbl_raise(const char *p, int badcheck, int raise, int *error)
     }
 }
 
-/*!
- * Parses a string representation of a floating point number.
- *
- * \param[in] p  a string representation of a floating number
- * \param[in] badcheck raises an exception on parse error if \a badcheck is non-zero.
- * \return the floating point number in the string on success,
- *   0.0 on parse error and \a badcheck is zero.
- * \note it always fails to parse a hexadecimal representation like "0xAB.CDp+1" when
- *   \a badcheck is zero, even though it would success if \a badcheck was non-zero.
- *   This inconsistency is coming from a historical compatibility reason. [ruby-dev:40822]
- */
 double
 rb_cstr_to_dbl(const char *p, int badcheck)
 {
@@ -3628,17 +3412,6 @@ rb_str_to_dbl_raise(VALUE str, int badcheck, int raise, int *error)
 
 FUNC_MINIMIZED(double rb_str_to_dbl(VALUE str, int badcheck));
 
-/*!
- * Parses a string representation of a floating point number.
- *
- * \param[in] str  a \c String object representation of a floating number
- * \param[in] badcheck raises an exception on parse error if \a badcheck is non-zero.
- * \return the floating point number in the string on success,
- *   0.0 on parse error and \a badcheck is zero.
- * \note it always fails to parse a hexadecimal representation like "0xAB.CDp+1" when
- *   \a badcheck is zero, even though it would success if \a badcheck was non-zero.
- *   This inconsistency is coming from a historical compatibility reason. [ruby-dev:40822]
- */
 double
 rb_str_to_dbl(VALUE str, int badcheck)
 {
@@ -3755,12 +3528,6 @@ rb_convert_to_float(VALUE val, int raise_exception)
 
 FUNC_MINIMIZED(VALUE rb_Float(VALUE val));
 
-/*!
- * Equivalent to \c Kernel\#Float in Ruby.
- *
- * Converts \a val into \c Float in a slightly more strict manner
- * than \c #to_f.
- */
 VALUE
 rb_Float(VALUE val)
 {
@@ -3784,11 +3551,6 @@ numeric_to_float(VALUE val)
     return rb_convert_type_with_id(val, T_FLOAT, "Float", id_to_f);
 }
 
-/*!
- * Converts a \c Numeric object into \c Float.
- * \param[in] val a \c Numeric object
- * \exception TypeError if \a val is not a \c Numeric or other conversion failures.
- */
 VALUE
 rb_to_float(VALUE val)
 {
@@ -3799,13 +3561,6 @@ rb_to_float(VALUE val)
     return numeric_to_float(val);
 }
 
-/*!
- * Tries to convert an object into \c Float.
- * It calls \c #to_f if necessary.
- *
- * It returns \c Qnil if the object is not a \c Numeric
- * or \c #to_f is not defined on the object.
- */
 VALUE
 rb_check_to_float(VALUE val)
 {
@@ -3858,13 +3613,6 @@ rb_num_to_dbl(VALUE val)
     return RFLOAT_VALUE(val);
 }
 
-/*!
- * Converts a \c Numeric object to \c double.
- * \param[in] val a \c Numeric object
- * \return the converted value
- * \exception TypeError if \a val is not a \c Numeric or
- *   it does not support conversion to a floating point number.
- */
 double
 rb_num2dbl(VALUE val)
 {
@@ -3897,12 +3645,6 @@ rb_num2dbl(VALUE val)
     return RFLOAT_VALUE(val);
 }
 
-/*!
- * Equivalent to \c Kernel\#String in Ruby.
- *
- * Converts \a val into \c String by trying \c #to_str at first and
- * then trying \c #to_s.
- */
 VALUE
 rb_String(VALUE val)
 {
@@ -3932,9 +3674,6 @@ rb_f_string(VALUE obj, VALUE arg)
     return rb_String(arg);
 }
 
-/*!
- * Equivalent to \c Kernel\#Array in Ruby.
- */
 VALUE
 rb_Array(VALUE val)
 {

@@ -2474,11 +2474,6 @@ rb_time_nano_new(time_t sec, long nsec)
     return time_new_timew(rb_cTime, nsec2timew(sec, nsec));
 }
 
-/**
- * Returns a time object with UTC/localtime/fixed offset
- *
- * offset is -86400 < fixoff < 86400 or INT_MAX (localtime) or INT_MAX-1 (utc)
- */
 VALUE
 rb_time_timespec_new(const struct timespec *ts, int offset)
 {
@@ -4460,7 +4455,7 @@ time_wday(VALUE time)
 }
 
 #define wday_p(n) {\
-    return (time_wday(time) == INT2FIX(n)) ? Qtrue : Qfalse; \
+    return RBOOL(time_wday(time) == INT2FIX(n)); \
 }
 
 /*

@@ -68,6 +68,11 @@ module TestIRB
       end
     end
 
+    def test_complete_require_library_name_first
+      candidates = IRB::InputCompletor::CompletionProc.("'csv", "require ", "")
+      assert_equal candidates.first, "'csv"
+    end
+
     def test_complete_require_relative
       candidates = Dir.chdir(__dir__ + "/../..") do
         IRB::InputCompletor::CompletionProc.("'lib/irb", "require_relative ", "")
@@ -82,6 +87,19 @@ module TestIRB
       %w['lib/irb/init 'lib/irb/ruby-lex].each do |word|
         assert_include candidates, word
       end
+    end
+
+    def test_complete_variable
+      str_example = ''
+      str_example.clear # suppress "assigned but unused variable" warning
+      assert_include(IRB::InputCompletor.retrieve_completion_data("str_examp", bind: binding), "str_example")
+      assert_equal(IRB::InputCompletor.retrieve_completion_data("str_example", bind: binding, doc_namespace: true), "String")
+      assert_equal(IRB::InputCompletor.retrieve_completion_data("str_example.to_s", bind: binding, doc_namespace: true), "String.to_s")
+    end
+
+    def test_complete_class_method
+      assert_include(IRB::InputCompletor.retrieve_completion_data("String.new", bind: binding), "String.new")
+      assert_equal(IRB::InputCompletor.retrieve_completion_data("String.new", bind: binding, doc_namespace: true), "String.new")
     end
   end
 end
