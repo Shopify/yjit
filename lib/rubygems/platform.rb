@@ -1,5 +1,5 @@
 # frozen_string_literal: true
-require "rubygems/deprecate"
+require_relative "deprecate"
 
 ##
 # Available list of platforms for targeting Gem installations.
@@ -38,6 +38,10 @@ class Gem::Platform
     # Note: this method might be redefined by Ruby implementations to
     # customize behavior per RUBY_ENGINE, gem_name or other criteria.
     match_platforms?(platform, Gem.platforms)
+  end
+
+  def self.sort_priority(platform)
+    platform == Gem::Platform::RUBY ? -1 : 1
   end
 
   def self.installable?(spec)

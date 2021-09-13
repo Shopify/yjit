@@ -101,9 +101,9 @@ class Reline::Unicode
 
   def self.get_mbchar_width(mbchar)
     ord = mbchar.ord
-    if (0x00 <= ord and ord <= 0x1F)
+    if (0x00 <= ord and ord <= 0x1F) # in EscapedPairs
       return 2
-    elsif (0x20 <= ord and ord <= 0x7E)
+    elsif (0x20 <= ord and ord <= 0x7E) # printable ASCII chars
       return 1
     end
     m = mbchar.encode(Encoding::UTF_8).match(MBCharWidthRE)
@@ -185,10 +185,10 @@ class Reline::Unicode
     [lines, height]
   end
 
-  # Take a chunk of a String with escape sequences.
-  def self.take_range(str, col, length, encoding = str.encoding)
+  # Take a chunk of a String cut by width with escape sequences.
+  def self.take_range(str, start_col, max_width, encoding = str.encoding)
     chunk = String.new(encoding: encoding)
-    width = 0
+    total_width = 0
     rest = str.encode(Encoding::UTF_8)
     in_zero_width = false
     rest.scan(WIDTH_SCANNER) do |gc|
@@ -206,9 +206,10 @@ class Reline::Unicode
         if in_zero_width
           chunk << gc
         else
-          width = get_mbchar_width(gc)
-          break if (width + length) <= col
-          chunk << gc if col <= width
+          mbchar_width = get_mbchar_width(gc)
+          total_width += mbchar_width
+          break if (start_col + max_width) < total_width
+          chunk << gc if start_col < total_width
         end
       end
     end

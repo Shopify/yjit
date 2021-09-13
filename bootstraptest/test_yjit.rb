@@ -1,3 +1,25 @@
+# Check that frozen objects are respected
+assert_equal 'great', %q{
+  class Foo
+    attr_accessor :bar
+    def initialize
+      @bar = 1
+      freeze
+    end
+  end
+
+  foo = Foo.new
+
+  5.times do
+    begin
+      foo.bar = 2
+    rescue FrozenError
+    end
+  end
+
+  foo.bar == 1 ? "great" : "NG"
+}
+
 # Check that global variable set works
 assert_equal 'string', %q{
   def foo
@@ -1943,7 +1965,7 @@ assert_equal '[true, false, false, false]', %q{
   ]
 }
 
-# Redefined eq
+# Redefined String eq
 assert_equal 'true', %q{
   class String
     def ==(other)
@@ -1951,6 +1973,26 @@ assert_equal 'true', %q{
     end
   end
 
-  "foo" == "bar"
-  "foo" == "bar"
+  def eq(a, b)
+    a == b
+  end
+
+  eq("foo", "bar")
+  eq("foo", "bar")
+}
+
+# Redefined Integer eq
+assert_equal 'true', %q{
+  class Integer
+    def ==(other)
+      true
+    end
+  end
+
+  def eq(a, b)
+    a == b
+  end
+
+  eq(1, 2)
+  eq(1, 2)
 }
