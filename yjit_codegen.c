@@ -739,6 +739,8 @@ yjit_gen_block(block_t *block, rb_execution_context_t *ec)
     }
 }
 
+static codegen_status_t gen_opt_send_without_block(jitstate_t *jit, ctx_t *ctx);
+
 static codegen_status_t
 gen_nop(jitstate_t* jit, ctx_t* ctx)
 {
@@ -1877,33 +1879,46 @@ typedef void (*cmov_fn)(codeblock_t* cb, x86opnd_t opnd0, x86opnd_t opnd1);
 static codegen_status_t
 gen_fixnum_cmp(jitstate_t* jit, ctx_t* ctx, cmov_fn cmov_op)
 {
-    // Create a size-exit to fall back to the interpreter
-    // Note: we generate the side-exit before popping operands from the stack
-    uint8_t* side_exit = yjit_side_exit(jit, ctx);
-
-    if (!assume_bop_not_redefined(jit->block, INTEGER_REDEFINED_OP_FLAG, BOP_LT)) {
-        return YJIT_CANT_COMPILE;
+    // Defer compilation so we can specialize base on a runtime receiver
+    if (!jit_at_current_insn(jit)) {
+        defer_compilation(jit->block, jit->insn_idx, ctx);
+        return YJIT_END_BLOCK;
     }
 
-    // Check that both operands are fixnums
-    guard_two_fixnums(ctx, side_exit);
+    VALUE comptime_a = jit_peek_at_stack(jit, ctx, 1);
+    VALUE comptime_b = jit_peek_at_stack(jit, ctx, 0);
 
-    // Get the operands from the stack
-    x86opnd_t arg1 = ctx_stack_pop(ctx, 1);
-    x86opnd_t arg0 = ctx_stack_pop(ctx, 1);
+    if (FIXNUM_P(comptime_a) && FIXNUM_P(comptime_b)) {
+        // Create a size-exit to fall back to the interpreter
+        // Note: we generate the side-exit before popping operands from the stack
+        uint8_t* side_exit = yjit_side_exit(jit, ctx);
 
-    // Compare the arguments
-    xor(cb, REG0_32, REG0_32); // REG0 = Qfalse
-    mov(cb, REG1, arg0);
-    cmp(cb, REG1, arg1);
-    mov(cb, REG1, imm_opnd(Qtrue));
-    cmov_op(cb, REG0, REG1);
+        if (!assume_bop_not_redefined(jit->block, INTEGER_REDEFINED_OP_FLAG, BOP_LT)) {
+            return YJIT_CANT_COMPILE;
+        }
 
-    // Push the output on the stack
-    x86opnd_t dst = ctx_stack_push(ctx, TYPE_UNKNOWN);
-    mov(cb, dst, REG0);
+        // Check that both operands are fixnums
+        guard_two_fixnums(ctx, side_exit);
 
-    return YJIT_KEEP_COMPILING;
+        // Get the operands from the stack
+        x86opnd_t arg1 = ctx_stack_pop(ctx, 1);
+        x86opnd_t arg0 = ctx_stack_pop(ctx, 1);
+
+        // Compare the arguments
+        xor(cb, REG0_32, REG0_32); // REG0 = Qfalse
+        mov(cb, REG1, arg0);
+        cmp(cb, REG1, arg1);
+        mov(cb, REG1, imm_opnd(Qtrue));
+        cmov_op(cb, REG0, REG1);
+
+        // Push the output on the stack
+        x86opnd_t dst = ctx_stack_push(ctx, TYPE_UNKNOWN);
+        mov(cb, dst, REG0);
+
+        return YJIT_KEEP_COMPILING;
+    } else {
+        return gen_opt_send_without_block(jit, ctx);
+    }
 }
 
 static codegen_status_t
@@ -2006,8 +2021,6 @@ gen_equality_specialized(jitstate_t* jit, ctx_t* ctx, uint8_t *side_exit)
         return false;
     }
 }
-
-static codegen_status_t gen_opt_send_without_block(jitstate_t *jit, ctx_t *ctx);
 
 static codegen_status_t
 gen_opt_eq(jitstate_t* jit, ctx_t* ctx)
@@ -2205,121 +2218,177 @@ gen_opt_aset(jitstate_t *jit, ctx_t *ctx)
 static codegen_status_t
 gen_opt_and(jitstate_t* jit, ctx_t* ctx)
 {
-    // Create a size-exit to fall back to the interpreter
-    // Note: we generate the side-exit before popping operands from the stack
-    uint8_t* side_exit = yjit_side_exit(jit, ctx);
-
-    if (!assume_bop_not_redefined(jit->block, INTEGER_REDEFINED_OP_FLAG, BOP_AND)) {
-        return YJIT_CANT_COMPILE;
+    // Defer compilation so we can specialize on a runtime `self`
+    if (!jit_at_current_insn(jit)) {
+        defer_compilation(jit->block, jit->insn_idx, ctx);
+        return YJIT_END_BLOCK;
     }
 
-    // Check that both operands are fixnums
-    guard_two_fixnums(ctx, side_exit);
+    VALUE comptime_a = jit_peek_at_stack(jit, ctx, 1);
+    VALUE comptime_b = jit_peek_at_stack(jit, ctx, 0);
 
-    // Get the operands and destination from the stack
-    x86opnd_t arg1 = ctx_stack_pop(ctx, 1);
-    x86opnd_t arg0 = ctx_stack_pop(ctx, 1);
+    if (FIXNUM_P(comptime_a) && FIXNUM_P(comptime_b)) {
+        // Create a size-exit to fall back to the interpreter
+        // Note: we generate the side-exit before popping operands from the stack
+        uint8_t* side_exit = yjit_side_exit(jit, ctx);
 
-    // Do the bitwise and arg0 & arg1
-    mov(cb, REG0, arg0);
-    and(cb, REG0, arg1);
+        if (!assume_bop_not_redefined(jit->block, INTEGER_REDEFINED_OP_FLAG, BOP_AND)) {
+            return YJIT_CANT_COMPILE;
+        }
 
-    // Push the output on the stack
-    x86opnd_t dst = ctx_stack_push(ctx, TYPE_FIXNUM);
-    mov(cb, dst, REG0);
+        // Check that both operands are fixnums
+        guard_two_fixnums(ctx, side_exit);
 
-    return YJIT_KEEP_COMPILING;
+        // Get the operands and destination from the stack
+        x86opnd_t arg1 = ctx_stack_pop(ctx, 1);
+        x86opnd_t arg0 = ctx_stack_pop(ctx, 1);
+
+        // Do the bitwise and arg0 & arg1
+        mov(cb, REG0, arg0);
+        and(cb, REG0, arg1);
+
+        // Push the output on the stack
+        x86opnd_t dst = ctx_stack_push(ctx, TYPE_FIXNUM);
+        mov(cb, dst, REG0);
+
+        return YJIT_KEEP_COMPILING;
+    } else {
+        // Delegate to send, call the method on the recv
+        return gen_opt_send_without_block(jit, ctx);
+    }
 }
 
 static codegen_status_t
 gen_opt_or(jitstate_t* jit, ctx_t* ctx)
 {
-    // Create a size-exit to fall back to the interpreter
-    // Note: we generate the side-exit before popping operands from the stack
-    uint8_t* side_exit = yjit_side_exit(jit, ctx);
-
-    if (!assume_bop_not_redefined(jit->block, INTEGER_REDEFINED_OP_FLAG, BOP_OR)) {
-        return YJIT_CANT_COMPILE;
+    // Defer compilation so we can specialize on a runtime `self`
+    if (!jit_at_current_insn(jit)) {
+        defer_compilation(jit->block, jit->insn_idx, ctx);
+        return YJIT_END_BLOCK;
     }
 
-    // Check that both operands are fixnums
-    guard_two_fixnums(ctx, side_exit);
+    VALUE comptime_a = jit_peek_at_stack(jit, ctx, 1);
+    VALUE comptime_b = jit_peek_at_stack(jit, ctx, 0);
 
-    // Get the operands and destination from the stack
-    x86opnd_t arg1 = ctx_stack_pop(ctx, 1);
-    x86opnd_t arg0 = ctx_stack_pop(ctx, 1);
+    if (FIXNUM_P(comptime_a) && FIXNUM_P(comptime_b)) {
+        // Create a size-exit to fall back to the interpreter
+        // Note: we generate the side-exit before popping operands from the stack
+        uint8_t* side_exit = yjit_side_exit(jit, ctx);
 
-    // Do the bitwise or arg0 | arg1
-    mov(cb, REG0, arg0);
-    or(cb, REG0, arg1);
+        if (!assume_bop_not_redefined(jit->block, INTEGER_REDEFINED_OP_FLAG, BOP_OR)) {
+            return YJIT_CANT_COMPILE;
+        }
 
-    // Push the output on the stack
-    x86opnd_t dst = ctx_stack_push(ctx, TYPE_FIXNUM);
-    mov(cb, dst, REG0);
+        // Check that both operands are fixnums
+        guard_two_fixnums(ctx, side_exit);
 
-    return YJIT_KEEP_COMPILING;
+        // Get the operands and destination from the stack
+        x86opnd_t arg1 = ctx_stack_pop(ctx, 1);
+        x86opnd_t arg0 = ctx_stack_pop(ctx, 1);
+
+        // Do the bitwise or arg0 | arg1
+        mov(cb, REG0, arg0);
+        or(cb, REG0, arg1);
+
+        // Push the output on the stack
+        x86opnd_t dst = ctx_stack_push(ctx, TYPE_FIXNUM);
+        mov(cb, dst, REG0);
+
+        return YJIT_KEEP_COMPILING;
+    } else {
+        // Delegate to send, call the method on the recv
+        return gen_opt_send_without_block(jit, ctx);
+    }
 }
 
 static codegen_status_t
 gen_opt_minus(jitstate_t* jit, ctx_t* ctx)
 {
-    // Create a size-exit to fall back to the interpreter
-    // Note: we generate the side-exit before popping operands from the stack
-    uint8_t* side_exit = yjit_side_exit(jit, ctx);
-
-    if (!assume_bop_not_redefined(jit->block, INTEGER_REDEFINED_OP_FLAG, BOP_MINUS)) {
-        return YJIT_CANT_COMPILE;
+    // Defer compilation so we can specialize on a runtime `self`
+    if (!jit_at_current_insn(jit)) {
+        defer_compilation(jit->block, jit->insn_idx, ctx);
+        return YJIT_END_BLOCK;
     }
 
-    // Check that both operands are fixnums
-    guard_two_fixnums(ctx, side_exit);
+    VALUE comptime_a = jit_peek_at_stack(jit, ctx, 1);
+    VALUE comptime_b = jit_peek_at_stack(jit, ctx, 0);
 
-    // Get the operands and destination from the stack
-    x86opnd_t arg1 = ctx_stack_pop(ctx, 1);
-    x86opnd_t arg0 = ctx_stack_pop(ctx, 1);
+    if (FIXNUM_P(comptime_a) && FIXNUM_P(comptime_b)) {
+        // Create a size-exit to fall back to the interpreter
+        // Note: we generate the side-exit before popping operands from the stack
+        uint8_t* side_exit = yjit_side_exit(jit, ctx);
 
-    // Subtract arg0 - arg1 and test for overflow
-    mov(cb, REG0, arg0);
-    sub(cb, REG0, arg1);
-    jo_ptr(cb, side_exit);
-    add(cb, REG0, imm_opnd(1));
+        if (!assume_bop_not_redefined(jit->block, INTEGER_REDEFINED_OP_FLAG, BOP_MINUS)) {
+            return YJIT_CANT_COMPILE;
+        }
 
-    // Push the output on the stack
-    x86opnd_t dst = ctx_stack_push(ctx, TYPE_FIXNUM);
-    mov(cb, dst, REG0);
+        // Check that both operands are fixnums
+        guard_two_fixnums(ctx, side_exit);
 
-    return YJIT_KEEP_COMPILING;
+        // Get the operands and destination from the stack
+        x86opnd_t arg1 = ctx_stack_pop(ctx, 1);
+        x86opnd_t arg0 = ctx_stack_pop(ctx, 1);
+
+        // Subtract arg0 - arg1 and test for overflow
+        mov(cb, REG0, arg0);
+        sub(cb, REG0, arg1);
+        jo_ptr(cb, side_exit);
+        add(cb, REG0, imm_opnd(1));
+
+        // Push the output on the stack
+        x86opnd_t dst = ctx_stack_push(ctx, TYPE_FIXNUM);
+        mov(cb, dst, REG0);
+
+        return YJIT_KEEP_COMPILING;
+    } else {
+        // Delegate to send, call the method on the recv
+        return gen_opt_send_without_block(jit, ctx);
+    }
 }
 
 static codegen_status_t
 gen_opt_plus(jitstate_t* jit, ctx_t* ctx)
 {
-    // Create a size-exit to fall back to the interpreter
-    // Note: we generate the side-exit before popping operands from the stack
-    uint8_t* side_exit = yjit_side_exit(jit, ctx);
-
-    if (!assume_bop_not_redefined(jit->block, INTEGER_REDEFINED_OP_FLAG, BOP_PLUS)) {
-        return YJIT_CANT_COMPILE;
+    // Defer compilation so we can specialize on a runtime `self`
+    if (!jit_at_current_insn(jit)) {
+        defer_compilation(jit->block, jit->insn_idx, ctx);
+        return YJIT_END_BLOCK;
     }
 
-    // Check that both operands are fixnums
-    guard_two_fixnums(ctx, side_exit);
+    VALUE comptime_a = jit_peek_at_stack(jit, ctx, 1);
+    VALUE comptime_b = jit_peek_at_stack(jit, ctx, 0);
 
-    // Get the operands and destination from the stack
-    x86opnd_t arg1 = ctx_stack_pop(ctx, 1);
-    x86opnd_t arg0 = ctx_stack_pop(ctx, 1);
+    if (FIXNUM_P(comptime_a) && FIXNUM_P(comptime_b)) {
+        // Create a size-exit to fall back to the interpreter
+        // Note: we generate the side-exit before popping operands from the stack
+        uint8_t* side_exit = yjit_side_exit(jit, ctx);
 
-    // Add arg0 + arg1 and test for overflow
-    mov(cb, REG0, arg0);
-    sub(cb, REG0, imm_opnd(1));
-    add(cb, REG0, arg1);
-    jo_ptr(cb, side_exit);
+        if (!assume_bop_not_redefined(jit->block, INTEGER_REDEFINED_OP_FLAG, BOP_PLUS)) {
+            return YJIT_CANT_COMPILE;
+        }
 
-    // Push the output on the stack
-    x86opnd_t dst = ctx_stack_push(ctx, TYPE_FIXNUM);
-    mov(cb, dst, REG0);
+        // Check that both operands are fixnums
+        guard_two_fixnums(ctx, side_exit);
 
-    return YJIT_KEEP_COMPILING;
+        // Get the operands and destination from the stack
+        x86opnd_t arg1 = ctx_stack_pop(ctx, 1);
+        x86opnd_t arg0 = ctx_stack_pop(ctx, 1);
+
+        // Add arg0 + arg1 and test for overflow
+        mov(cb, REG0, arg0);
+        sub(cb, REG0, imm_opnd(1));
+        add(cb, REG0, arg1);
+        jo_ptr(cb, side_exit);
+
+        // Push the output on the stack
+        x86opnd_t dst = ctx_stack_push(ctx, TYPE_FIXNUM);
+        mov(cb, dst, REG0);
+
+        return YJIT_KEEP_COMPILING;
+    } else {
+        // Delegate to send, call the method on the recv
+        return gen_opt_send_without_block(jit, ctx);
+    }
 }
 
 static codegen_status_t
