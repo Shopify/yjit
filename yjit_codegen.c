@@ -2182,8 +2182,6 @@ gen_opt_aref(jitstate_t *jit, ctx_t *ctx)
     }
 }
 
-VALUE rb_vm_opt_aset(VALUE recv, VALUE obj, VALUE set);
-
 static codegen_status_t
 gen_opt_aset(jitstate_t *jit, ctx_t *ctx)
 {
