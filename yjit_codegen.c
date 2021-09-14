@@ -348,9 +348,6 @@ yjit_gen_exit(VALUE *exit_pc, ctx_t *ctx, codeblock_t *cb)
         mov(cb, member_opnd(REG_CFP, rb_control_frame_t, sp), REG_SP);
     }
 
-    // Update the CFP on the EC
-    mov(cb, member_opnd(REG_EC, rb_execution_context_t, cfp), REG_CFP);
-
     // Update CFP->PC
     mov(cb, RAX, const_ptr_opnd(exit_pc));
     mov(cb, member_opnd(REG_CFP, rb_control_frame_t, pc), RAX);
@@ -3288,9 +3285,6 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
         return YJIT_CANT_COMPILE;
     }
 
-    // The starting pc of the callee frame
-    const VALUE *start_pc = &iseq->body->iseq_encoded[start_pc_offset];
-
     // Number of locals that are not parameters
     const int num_locals = iseq->body->local_table_size - num_params;
 
@@ -3407,8 +3401,11 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
     mov(cb, member_opnd(REG_CFP, rb_control_frame_t, self), REG0);
     jit_mov_gc_ptr(jit, cb, REG0, (VALUE)iseq);
     mov(cb, member_opnd(REG_CFP, rb_control_frame_t, iseq), REG0);
-    mov(cb, REG0, const_ptr_opnd(start_pc));
-    mov(cb, member_opnd(REG_CFP, rb_control_frame_t, pc), REG0);
+
+    // No need to set cfp->pc since the callee sets it whenever calling into routines
+    // that could look at it through jit_save_pc().
+    // mov(cb, REG0, const_ptr_opnd(start_pc));
+    // mov(cb, member_opnd(REG_CFP, rb_control_frame_t, pc), REG0);
 
     // Stub so we can return to JITted code
     blockid_t return_block = { jit->iseq, jit_next_insn_idx(jit) };
