@@ -676,6 +676,7 @@ x86opnd_t ir_gen_x86opnd(ir_opnd_t opnd)
             return (x86opnd_t){ OPND_IMM, opnd.num_bits, .as.imm = opnd.as.imm };
         default:
             RUBY_ASSERT(false && "unknown opnd kind");
+            return (x86opnd_t){ 0 };
     }
 }
 
@@ -847,7 +848,7 @@ void test_backend()
     printf("Running backend tests\n");
 
     // Used by the tests to compare function outputs.
-    int64_t expected, actual;
+    int expected, actual;
 
     // Used by the tests to write out the IR instructions.
     jitstate_t jitstate;
@@ -866,7 +867,7 @@ void test_backend()
         expected = EXPECTED; \
         actual = function(); \
         if (expected != actual) { \
-            fprintf(stderr, "%s failed: expected %lld, got %lld\n", NAME, expected, actual); \
+            fprintf(stderr, "%s failed: expected %d, got %d\n", NAME, expected, actual); \
             exit(-1); \
         }
 
@@ -915,7 +916,7 @@ void test_backend()
     });
 
     TEST("jump equal", 2, {
-        ir_opnd_t label = ir_label_opnd("label");
+        ir_opnd_t label = ir_label_opnd((char *) "label");
         ir_jump_eq(jit, ir_imm(3), ir_imm(3), label);
         ir_retval(jit, ir_imm(1));
         ir_label(jit, label);
@@ -923,7 +924,7 @@ void test_backend()
     });
 
     TEST("jump not equal", 2, {
-        ir_opnd_t label = ir_label_opnd("label");
+        ir_opnd_t label = ir_label_opnd((char *) "label");
         ir_jump_ne(jit, ir_imm(3), ir_imm(4), label);
         ir_retval(jit, ir_imm(1));
         ir_label(jit, label);
@@ -931,7 +932,7 @@ void test_backend()
     });
 
     TEST("jump overflow", 2, {
-        ir_opnd_t label = ir_label_opnd("label");
+        ir_opnd_t label = ir_label_opnd((char *) "label");
         ir_add(jit, ir_imm(INT64_MAX), ir_imm(1));
         ir_jump_ovf(jit, label);
         ir_retval(jit, ir_imm(1));
@@ -985,7 +986,7 @@ void test_backend_performance()
         });
 
         TEST("jump equal", 2, {
-            ir_opnd_t label = ir_label_opnd("label");
+            ir_opnd_t label = ir_label_opnd((char *) "label");
             ir_jump_eq(jit, ir_imm(3), ir_imm(3), label);
             ir_retval(jit, ir_imm(1));
             ir_label(jit, label);
@@ -993,7 +994,7 @@ void test_backend_performance()
         });
 
         TEST("jump not equal", 2, {
-            ir_opnd_t label = ir_label_opnd("label");
+            ir_opnd_t label = ir_label_opnd((char *) "label");
             ir_jump_ne(jit, ir_imm(3), ir_imm(4), label);
             ir_retval(jit, ir_imm(1));
             ir_label(jit, label);
@@ -1001,7 +1002,7 @@ void test_backend_performance()
         });
 
         TEST("jump overflow", 2, {
-            ir_opnd_t label = ir_label_opnd("label");
+            ir_opnd_t label = ir_label_opnd((char *) "label");
             ir_add(jit, ir_imm(INT64_MAX), ir_imm(1));
             ir_jump_ovf(jit, label);
             ir_retval(jit, ir_imm(1));
