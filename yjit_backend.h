@@ -181,10 +181,57 @@ enum yjit_ir_op
 
     // A low-level mov instruction. It accepts two operands. The first must
     // either be an EIR_REG or a EIR_INSN_OUT that resolves to a register. The
-    // second can be anything else. Most of the time, this instruction shouldn't
-    // be used by the developer, since other instructions break down to this
+    // second can be anything else. Most of the time this instruction shouldn't
+    // be used by the developer since other instructions break down to this
     // one.
     OP_MOV,
+
+    // A low-level cmp instruction. It accepts two operands. The first it
+    // expects to be a register. The second can be anything. Most of the time
+    // this instruction shouldn't be used by the developer since other
+    // instructions break down to this one.
+    OP_CMP,
+
+    // A conditional move instruction that should be preceeded at some point by
+    // an OP_CMP instruction that would have set the requisite comparison flags.
+    // Accepts 2 operands, both of which are expected to be of the EIR_REG type.
+    //
+    // If the comparison indicates the left compared value is greater than or
+    // equal to the right compared value, then the conditional move is executed,
+    // otherwise we just continue on to the next instruction.
+    //
+    // This is considered a low-level instruction, and the OP_SELECT_* variants
+    // should be preferred if possible.
+    OP_CMOV_GE,
+
+    // The same as OP_CMOV_GE, except the comparison is greater than.
+    OP_CMOV_GT,
+
+    // The same as OP_CMOV_GE, except the comparison is less than or equal.
+    OP_CMOV_LE,
+
+    // The same as OP_CMOV_GE, except the comparison is less than.
+    OP_CMOV_LT,
+
+    // Selects between two different values based on a comparison of two other
+    // values. Accepts 4 operands. The first two are the basis of the
+    // comparison. The second two are the "then" case and the "else" case. You
+    // can effectively think of this instruction as a ternary operation, where
+    // the first two values are being compared.
+    //
+    // OP_SELECT_GE performs the described ternary using a greater than or equal
+    // comparison, that is if the first operand is greater than or equal to the
+    // second operand.
+    OP_SELECT_GE,
+
+    // The same as OP_SELECT_GE, except the comparison is greater than.
+    OP_SELECT_GT,
+
+    // The same as OP_SELECT_GE, except the comparison is less than or equal.
+    OP_SELECT_LE,
+
+    // The same as OP_SELECT_GE, except the comparison is less than.
+    OP_SELECT_LT,
 
     // For later:
     // These encode Ruby true/false semantics
@@ -202,7 +249,6 @@ enum yjit_ir_op
 
     // For later:
     // OP_LEA,
-    // OP_CMP,
     // OP_TEST,
 
     // Upper bound for opcodes. Not used for actual instructions.
