@@ -289,6 +289,20 @@ class TestYJIT < Test::Unit::TestCase
     RUBY
   end
 
+  def test_compile_opt_getinlinecache_outdated
+    # Side exit on first invocation, success on second
+    assert_compiles(<<~RUBY, insns: %i[opt_getinlinecache], result: 123, exits: { opt_getinlinecache: 1 })
+      def get_foo
+        FOO
+      end
+
+      FOO = 123
+
+      get_foo # warm inline cache
+      get_foo
+    RUBY
+  end
+
   def test_string_interpolation
     assert_compiles(<<~'RUBY', insns: %i[checktype concatstrings], result: "foobar", min_calls: 2)
       def make_str(foo, bar)

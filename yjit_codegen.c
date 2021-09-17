@@ -4069,21 +4069,36 @@ gen_opt_getinlinecache(jitstate_t *jit, ctx_t *ctx)
 
     // See vm_ic_hit_p(). The same conditions are checked in yjit_constant_ic_update().
     struct iseq_inline_constant_cache_entry *ice = ic->entry;
-    if (!ice || // cache not filled
-        ice->ic_serial != ruby_vm_global_constant_state || // cache out of date
-        ice->ic_cref /* cache only valid for certain lexical scopes */) {
-        // In these cases, leave a block that unconditionally side exits
-        // for the interpreter to invalidate.
-        return YJIT_CANT_COMPILE;
-    }
 
     // Optimize for single ractor mode.
     // FIXME: This leaks when st_insert raises NoMemoryError
     if (!assume_single_ractor_mode(jit->block)) return YJIT_CANT_COMPILE;
 
+    /* cache only valid for certain lexical scopes */
+    if (ice && ice->ic_cref) {
+        // We can never compile this
+        return YJIT_CANT_COMPILE;
+    }
+
     // Invalidate output code on any and all constant writes
     // FIXME: This leaks when st_insert raises NoMemoryError
     assume_stable_global_constant_state(jit->block);
+
+    if (!ice || // cache not filled
+        ice->ic_serial != ruby_vm_global_constant_state // cache out of date
+        ) {
+        // In these cases, leave a block that unconditionally side exits
+        // for the interpreter to invalidate.
+        //
+        // This must be below assume_stable_global_constant_state
+        //
+        // Here we generate our own side exit and return END_BLOCK instead of
+        // returning CANT_COMPILE so that we always write this block and so
+        // that it can be invalidated in the future and we'll later receive the
+        // updated ice values
+        yjit_gen_exit(jit->pc, ctx, cb);
+        return YJIT_END_BLOCK;
+    }
 
     val_type_t type = yjit_type_of_value(ice->value);
     x86opnd_t stack_top = ctx_stack_push(ctx, type);
