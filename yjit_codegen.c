@@ -1221,6 +1221,21 @@ gen_get_ep(codeblock_t *cb, x86opnd_t reg, uint32_t level)
     }
 }
 
+// Determine the distance to local_ep
+// result can be passed to gen_get_ep
+// similar to get_lvar_level in compile.c
+static int
+get_lvar_level(const jitstate_t *jit)
+{
+    const rb_iseq_t *iseq = jit->iseq;
+    int lev = 0;
+    while (iseq != iseq->body->local_iseq) {
+        lev++;
+        iseq = iseq->body->parent_iseq;
+    }
+    return lev;
+}
+
 // Compute the index of a local variable from its slot index
 static uint32_t
 slot_to_local_idx(const rb_iseq_t *iseq, int32_t slot_idx)
@@ -3124,11 +3139,6 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
     if (vm_ci_flag(ci) & VM_CALL_ARGS_BLOCKARG) {
         RUBY_ASSERT(!block);
 
-        // Only compile if our ec is local
-	    if(!VM_ENV_LOCAL_P(jit->ec->cfp->ep)) {
-            return YJIT_CANT_COMPILE;
-        }
-
         if (ctx_get_opnd_type(ctx, OPND_STACK(0)).type == ETYPE_BLOCK_PARAM_PROXY) {
             block = rb_block_param_proxy;
             ctx_stack_pop(ctx, 1);
@@ -3164,7 +3174,7 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
     jit_save_pc(jit, REG0);
 
     if (block == rb_block_param_proxy) {
-        mov(cb, REG0, member_opnd(REG_CFP, rb_control_frame_t, ep));
+        gen_get_ep(cb, REG0, get_lvar_level(jit));
         mov(cb, REG0, mem_opnd(64, REG0, SIZEOF_VALUE * VM_ENV_DATA_INDEX_SPECVAL));
         mov(cb, member_opnd(REG_CFP, rb_control_frame_t, block_code), REG0);
     } else if (block) {
@@ -3426,11 +3436,6 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
     if (vm_ci_flag(ci) & VM_CALL_ARGS_BLOCKARG) {
         RUBY_ASSERT(!block);
 
-        // Only compile if our ec is local
-	    if(!VM_ENV_LOCAL_P(jit->ec->cfp->ep)) {
-            return YJIT_CANT_COMPILE;
-        }
-
         argb = 1;
 
         if (ctx_get_opnd_type(ctx, OPND_STACK(0)).type == ETYPE_BLOCK_PARAM_PROXY) {
@@ -3495,7 +3500,7 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
     jit_save_pc(jit, REG0);
 
     if (block == rb_block_param_proxy) {
-        mov(cb, REG0, member_opnd(REG_CFP, rb_control_frame_t, ep));
+        gen_get_ep(cb, REG0, get_lvar_level(jit));
         mov(cb, REG0, mem_opnd(64, REG0, SIZEOF_VALUE * VM_ENV_DATA_INDEX_SPECVAL));
         mov(cb, member_opnd(REG_CFP, rb_control_frame_t, block_code), REG0);
     } else if (block) {
