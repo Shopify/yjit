@@ -1137,6 +1137,9 @@ invalidate_block_version(block_t *block)
     // they enter the function with a non-zero PC
     if (block->blockid.idx == 0) {
         iseq->body->jit_func = 0;
+
+        // reset total_calls so that we have a chance to recompile
+        iseq->body->total_calls = 0;
     }
 #endif
 
