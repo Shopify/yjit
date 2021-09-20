@@ -4140,6 +4140,7 @@ gen_invokebuiltin(jitstate_t *jit, ctx_t *ctx)
 {
     const struct rb_builtin_function *bf = (struct rb_builtin_function *)jit_get_arg(jit, 0);
 
+    // ec, self, and arguments
     if (bf->argc + 2 > NUM_C_ARG_REGS) {
         return YJIT_CANT_COMPILE;
     }
@@ -4177,6 +4178,7 @@ gen_opt_invokebuiltin_delegate(jitstate_t *jit, ctx_t *ctx)
     const struct rb_builtin_function *bf = (struct rb_builtin_function *)jit_get_arg(jit, 0);
     int32_t start_index = (int32_t)jit_get_arg(jit, 1);
 
+    // ec, self, and arguments
     if (bf->argc + 2 > NUM_C_ARG_REGS) {
         return YJIT_CANT_COMPILE;
     }
