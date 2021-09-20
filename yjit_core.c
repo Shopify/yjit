@@ -319,6 +319,9 @@ yjit_type_of_value(VALUE val)
             RUBY_ASSERT(false);
             UNREACHABLE_RETURN(TYPE_IMM);
         }
+    } else if (val == rb_block_param_proxy) {
+        // special case for block proxy object
+        return TYPE_BLOCK_PARAM_PROXY;
     } else {
         switch (BUILTIN_TYPE(val)) {
             case T_ARRAY:

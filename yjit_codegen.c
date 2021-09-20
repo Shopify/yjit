@@ -4179,7 +4179,7 @@ gen_getblockparamproxy(jitstate_t* jit, ctx_t* ctx, codeblock_t* cb)
     // Push rb_block_param_proxy. It's a root, so no need to use jit_mov_gc_ptr.
     mov(cb, REG0, const_ptr_opnd((void *)rb_block_param_proxy));
     RUBY_ASSERT(!SPECIAL_CONST_P(rb_block_param_proxy));
-    x86opnd_t top = ctx_stack_push(ctx, TYPE_HEAP);
+    x86opnd_t top = ctx_stack_push(ctx, TYPE_BLOCK_PARAM_PROXY);
     mov(cb, top, REG0);
 
     return YJIT_KEEP_COMPILING;
