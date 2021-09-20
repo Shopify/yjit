@@ -234,6 +234,11 @@ const char* ir_op_name(int op)
         case OP_AND: return "and";
         case OP_CALL: return "call";
         case OP_CCALL: return "ccall";
+        case OP_CMOV_GE: return "cmovge";
+        case OP_CMOV_GT: return "cmovg";
+        case OP_CMOV_LE: return "cmovle";
+        case OP_CMOV_LT: return "cmovl";
+        case OP_CMP: return "cmp";
         case OP_COMMENT: return "comment";
         case OP_JUMP_EQ: return "jumpeq";
         case OP_JUMP_NE: return "jumpne";
@@ -243,10 +248,15 @@ const char* ir_op_name(int op)
         case OP_NOT: return "not";
         case OP_RET: return "ret";
         case OP_RETVAL: return "retval";
+        case OP_SELECT_GE: return "selectge";
+        case OP_SELECT_GT: return "selectgt";
+        case OP_SELECT_LE: return "selectle";
+        case OP_SELECT_LT: return "selectlt";
         case OP_SUB: return "sub";
 
         default:
             RUBY_ASSERT(false && "unknown opnd type");
+            return "unknown";
     }
 }
 
@@ -310,6 +320,18 @@ void ir_print_to_dot(jitstate_t *jit)
 
 #define ir_ccall(jit, ...) ir_push_insn(jit, OP_CCALL, __VA_ARGS__)
 
+#define ir_cmov_ge(jit, opnd0, opnd1) \
+    ir_push_insn(jit, OP_CMOV_GE, opnd0, opnd1)
+
+#define ir_cmov_gt(jit, opnd0, opnd1) \
+    ir_push_insn(jit, OP_CMOV_GT, opnd0, opnd1)
+
+#define ir_cmov_le(jit, opnd0, opnd1) \
+    ir_push_insn(jit, OP_CMOV_LE, opnd0, opnd1)
+
+#define ir_cmov_lt(jit, opnd0, opnd1) \
+    ir_push_insn(jit, OP_CMOV_LT, opnd0, opnd1)
+
 void ir_comment(jitstate_t *jit, ir_opnd_t opnd)
 {
     ir_push_insn(jit, OP_COMMENT, opnd);
@@ -345,6 +367,12 @@ ir_opnd_t ir_mov(jitstate_t *jit, ir_opnd_t opnd0, ir_opnd_t opnd1)
     return ir_push_insn(jit, OP_MOV, opnd0, opnd1);
 }
 
+ir_opnd_t ir_cmp(jitstate_t *jit, ir_opnd_t opnd0, ir_opnd_t opnd1)
+{
+    RUBY_ASSERT((opnd0.kind == EIR_INSN_OUT || opnd0.kind == EIR_REG) && "can only cmp with a EIR_INSN_OUT or EIR_REG");
+    return ir_push_insn(jit, OP_CMP, opnd0, opnd1);
+}
+
 #define ir_not(jit, opnd) ir_push_insn(jit, OP_NOT, opnd)
 
 void ir_ret(jitstate_t *jit)
@@ -356,6 +384,18 @@ void ir_retval(jitstate_t *jit, ir_opnd_t opnd)
 {
     ir_push_insn(jit, OP_RETVAL, opnd);
 }
+
+#define ir_select_ge(jit, opnd0, opnd1, opnd2, opnd3) \
+    ir_push_insn(jit, OP_SELECT_GE, opnd0, opnd1, opnd2, opnd3)
+
+#define ir_select_gt(jit, opnd0, opnd1, opnd2, opnd3) \
+    ir_push_insn(jit, OP_SELECT_GT, opnd0, opnd1, opnd2, opnd3)
+
+#define ir_select_le(jit, opnd0, opnd1, opnd2, opnd3) \
+    ir_push_insn(jit, OP_SELECT_LE, opnd0, opnd1, opnd2, opnd3)
+
+#define ir_select_lt(jit, opnd0, opnd1, opnd2, opnd3) \
+    ir_push_insn(jit, OP_SELECT_LT, opnd0, opnd1, opnd2, opnd3)
 
 #define ir_sub(jit, opnd0, opnd1) ir_push_insn(jit, OP_SUB, opnd0, opnd1)
 
@@ -379,7 +419,9 @@ int32_t ir_next_scr_reg_idx(int32_t active[NUM_SCR_REGS])
             return index;
         }
     }
+
     RUBY_ASSERT(false && "out of free registers");
+    return -1;
 }
 
 // When we're about to walk through the instructions and perform some kind of
@@ -629,11 +671,67 @@ void ir_alloc_regs(jitstate_t *jit)
                 rb_darray_append(&jit->insns, call);
                 break;
             }
+            case OP_SELECT_GE:
+            case OP_SELECT_GT:
+            case OP_SELECT_LE:
+            case OP_SELECT_LT: {
+                ir_opnd_t left = ir_opnd(insn, 0, allocations);
+                ir_opnd_t right = ir_opnd(insn, 1, allocations);
+
+                ir_opnd_t then_case = ir_opnd(insn, 2, allocations);
+                ir_opnd_t else_case = ir_opnd(insn, 3, allocations);
+
+                // Always allocate a register, since we need a place for the
+                // cases to live.
+                int32_t allocated_index = ir_next_scr_reg_idx(active);
+                ir_opnd_t allocated = SCR_REGS[allocated_index];
+
+                allocations[insn_idx] = allocated_index;
+                active[allocated_index] = last_insn_index;
+
+                ir_mov(jit, allocated, left);
+                ir_cmp(jit, allocated, right);
+
+                // Now that the comparison is done, we can safely move the
+                // else_case operand into the allocated register while
+                // maintaining the comparison flags.
+                ir_mov(jit, allocated, else_case);
+
+                if (then_case.kind != EIR_REG) {
+                    // Since we don't have as register as the then_case operand,
+                    // we have to first allocate one and then mov the value into
+                    // that register.
+                    int32_t then_allocated_index = ir_next_scr_reg_idx(active);
+                    ir_opnd_t then_allocated = SCR_REGS[then_allocated_index];
+
+                    active[then_allocated_index] = last_insn_index;
+                    ir_mov(jit, then_allocated, then_case);
+                    then_case = then_allocated;
+                }
+
+                // Now we're going to conditionally move the then_case into the
+                // allocated register depending on if the comparison flags line
+                // up to the expected values depending on the current
+                // instruction.
+                switch (insn.op) {
+                    case OP_SELECT_GE: ir_cmov_ge(jit, allocated, then_case); break;
+                    case OP_SELECT_GT: ir_cmov_gt(jit, allocated, then_case); break;
+                    case OP_SELECT_LE: ir_cmov_le(jit, allocated, then_case); break;
+                    case OP_SELECT_LT: ir_cmov_lt(jit, allocated, then_case); break;
+                }
+
+                break;
+            }
         }
 
         switch (insn.op) {
             // These instructions are just copied over between passes.
             case OP_CALL:
+            case OP_CMOV_GE:
+            case OP_CMOV_GT:
+            case OP_CMOV_LE:
+            case OP_CMOV_LT:
+            case OP_CMP:
             case OP_COMMENT:
             case OP_JUMP_OVF:
             case OP_LABEL:
@@ -753,6 +851,36 @@ void ir_gen_x86(codeblock_t *cb, jitstate_t *jit)
                 }
 
                 call(cb, pointer);
+                break;
+            }
+            case OP_CMOV_GE: {
+                x86opnd_t opnd0 = ir_gen_x86opnd(rb_darray_get(insn->opnds, 0));
+                x86opnd_t opnd1 = ir_gen_x86opnd(rb_darray_get(insn->opnds, 1));
+                cmovge(cb, opnd0, opnd1);
+                break;
+            }
+            case OP_CMOV_GT: {
+                x86opnd_t opnd0 = ir_gen_x86opnd(rb_darray_get(insn->opnds, 0));
+                x86opnd_t opnd1 = ir_gen_x86opnd(rb_darray_get(insn->opnds, 1));
+                cmovg(cb, opnd0, opnd1);
+                break;
+            }
+            case OP_CMOV_LE: {
+                x86opnd_t opnd0 = ir_gen_x86opnd(rb_darray_get(insn->opnds, 0));
+                x86opnd_t opnd1 = ir_gen_x86opnd(rb_darray_get(insn->opnds, 1));
+                cmovle(cb, opnd0, opnd1);
+                break;
+            }
+            case OP_CMOV_LT: {
+                x86opnd_t opnd0 = ir_gen_x86opnd(rb_darray_get(insn->opnds, 0));
+                x86opnd_t opnd1 = ir_gen_x86opnd(rb_darray_get(insn->opnds, 1));
+                cmovl(cb, opnd0, opnd1);
+                break;
+            }
+            case OP_CMP: {
+                x86opnd_t opnd0 = ir_gen_x86opnd(rb_darray_get(insn->opnds, 0));
+                x86opnd_t opnd1 = ir_gen_x86opnd(rb_darray_get(insn->opnds, 1));
+                cmp(cb, opnd0, opnd1);
                 break;
             }
             case OP_COMMENT:
@@ -947,6 +1075,38 @@ void test_backend()
     TEST("call with arguments", 7, {
         ir_retval(jit, ir_ccall(jit, ir_const_ptr((void *)&ir_test_function_add), ir_imm(3), ir_imm(4)));
     });
+
+    TEST("select greater than or equal to", 1, {
+        ir_retval(jit, ir_select_ge(jit, ir_imm(3), ir_imm(3), ir_imm(1), ir_imm(2)));
+    })
+
+    TEST("select not greater than or equal to", 2, {
+        ir_retval(jit, ir_select_ge(jit, ir_imm(3), ir_imm(4), ir_imm(1), ir_imm(2)));
+    })
+
+    TEST("select greater than", 1, {
+        ir_retval(jit, ir_select_gt(jit, ir_imm(4), ir_imm(3), ir_imm(1), ir_imm(2)));
+    })
+
+    TEST("select not greater than", 2, {
+        ir_retval(jit, ir_select_gt(jit, ir_imm(3), ir_imm(3), ir_imm(1), ir_imm(2)));
+    })
+
+    TEST("select less than or equal to", 1, {
+        ir_retval(jit, ir_select_le(jit, ir_imm(3), ir_imm(3), ir_imm(1), ir_imm(2)));
+    })
+
+    TEST("select not less than or equal to", 2, {
+        ir_retval(jit, ir_select_le(jit, ir_imm(4), ir_imm(3), ir_imm(1), ir_imm(2)));
+    })
+
+    TEST("select less than", 1, {
+        ir_retval(jit, ir_select_lt(jit, ir_imm(3), ir_imm(4), ir_imm(1), ir_imm(2)));
+    })
+
+    TEST("select not less than", 2, {
+        ir_retval(jit, ir_select_lt(jit, ir_imm(3), ir_imm(3), ir_imm(1), ir_imm(2)));
+    })
 
     #undef TEST
     printf("Backend tests done\n");
