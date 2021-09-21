@@ -70,6 +70,16 @@ jit_print_loc(jitstate_t* jit, const char* msg)
     fprintf(stderr, "%s %.*s:%u\n", msg, (int)len, ptr, rb_iseq_line_no(jit->iseq, jit->insn_idx));
 }
 
+// dump an object for debugging purposes
+RBIMPL_ATTR_MAYBE_UNUSED()
+static void
+jit_obj_info_dump(codeblock_t *cb, x86opnd_t opnd) {
+    push_regs(cb);
+    mov(cb, C_ARG_REGS[0], opnd);
+    call_ptr(cb, REG0, (void *)rb_obj_info_dump);
+    pop_regs(cb);
+}
+
 // Get the current instruction's opcode
 static int
 jit_get_opcode(jitstate_t* jit)
@@ -3121,7 +3131,7 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
     // Stack overflow check
     // #define CHECK_VM_STACK_OVERFLOW0(cfp, sp, margin)
     // REG_CFP <= REG_SP + 4 * sizeof(VALUE) + sizeof(rb_control_frame_t)
-    lea(cb, REG0, ctx_sp_opnd(ctx, sizeof(VALUE) * 4 + sizeof(rb_control_frame_t)));
+    lea(cb, REG0, ctx_sp_opnd(ctx, sizeof(VALUE) * 4 + 2 * sizeof(rb_control_frame_t)));
     cmp(cb, REG_CFP, REG0);
     jle_ptr(cb, COUNTED_EXIT(side_exit, send_se_cf_overflow));
 
@@ -3417,9 +3427,10 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
     }
 
     // Stack overflow check
+    // Note that vm_push_frame checks it against a decremented cfp, hence the multiply by 2.
     // #define CHECK_VM_STACK_OVERFLOW0(cfp, sp, margin)
     ADD_COMMENT(cb, "stack overflow check");
-    lea(cb, REG0, ctx_sp_opnd(ctx, sizeof(VALUE) * (num_locals + iseq->body->stack_max) + sizeof(rb_control_frame_t)));
+    lea(cb, REG0, ctx_sp_opnd(ctx, sizeof(VALUE) * (num_locals + iseq->body->stack_max) + 2 * sizeof(rb_control_frame_t)));
     cmp(cb, REG_CFP, REG0);
     jle_ptr(cb, COUNTED_EXIT(side_exit, send_se_cf_overflow));
 
