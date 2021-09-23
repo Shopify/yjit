@@ -720,7 +720,7 @@ uint8_t* gen_entry_point(const rb_iseq_t *iseq, uint32_t insn_idx, rb_execution_
     blockid_t blockid = { iseq, insn_idx };
 
     // Write the interpreter entry prologue
-    uint8_t* code_ptr = yjit_entry_prologue(iseq);
+    uint8_t* code_ptr = yjit_entry_prologue(cb, iseq);
 
     // Try to generate code for the entry block
     block_t* block = gen_block_version(blockid, &DEFAULT_CTX, ec);
@@ -872,7 +872,7 @@ uint8_t* get_branch_target(
 }
 
 void gen_branch(
-    block_t* block,
+    jitstate_t* jit,
     const ctx_t* src_ctx,
     blockid_t target0,
     const ctx_t* ctx0,
@@ -883,7 +883,7 @@ void gen_branch(
 {
     RUBY_ASSERT(target0.iseq != NULL);
 
-    branch_t* branch = make_branch_entry(block, src_ctx, gen_fn);
+    branch_t* branch = make_branch_entry(jit->block, src_ctx, gen_fn);
     branch->targets[0] = target0;
     branch->targets[1] = target1;
     branch->target_ctxs[0] = *ctx0;
@@ -918,14 +918,14 @@ gen_jump_branch(codeblock_t* cb, uint8_t* target0, uint8_t* target1, uint8_t sha
 }
 
 void gen_direct_jump(
-    block_t* block,
+    jitstate_t* jit,
     const ctx_t* ctx,
     blockid_t target0
 )
 {
     RUBY_ASSERT(target0.iseq != NULL);
 
-    branch_t* branch = make_branch_entry(block, ctx, gen_jump_branch);
+    branch_t* branch = make_branch_entry(jit->block, ctx, gen_jump_branch);
     branch->targets[0] = target0;
     branch->target_ctxs[0] = *ctx;
 
@@ -956,8 +956,7 @@ void gen_direct_jump(
 
 // Create a stub to force the code up to this point to be executed
 void defer_compilation(
-    block_t* block,
-    uint32_t insn_idx,
+    jitstate_t* jit,
     ctx_t* cur_ctx
 )
 {
@@ -975,14 +974,15 @@ void defer_compilation(
 
     next_ctx.chain_depth += 1;
 
-    branch_t* branch = make_branch_entry(block, cur_ctx, gen_jump_branch);
+    branch_t* branch = make_branch_entry(jit->block, cur_ctx, gen_jump_branch);
 
     // Get the branch targets or stubs
     branch->target_ctxs[0] = next_ctx;
-    branch->targets[0] = (blockid_t){ block->blockid.iseq, insn_idx };
+    branch->targets[0] = (blockid_t){ jit->block->blockid.iseq, jit->insn_idx };
     branch->dst_addrs[0] = get_branch_target(branch->targets[0], &next_ctx, branch, 0);
 
     // Call the branch generation function
+    codeblock_t* cb = jit->cb;
     branch->start_pos = cb->write_pos;
     gen_jump_branch(cb, branch->dst_addrs[0], NULL, SHAPE_DEFAULT);
     branch->end_pos = cb->write_pos;

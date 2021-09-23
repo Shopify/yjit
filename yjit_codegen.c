@@ -170,6 +170,7 @@ jit_peek_at_local(jitstate_t *jit, ctx_t *ctx, int n)
 static void
 jit_save_pc(jitstate_t* jit, x86opnd_t scratch_reg)
 {
+    codeblock_t* cb = jit->cb;
     mov(cb, scratch_reg, const_ptr_opnd(jit->pc + insn_len(jit->opcode)));
     mov(cb, mem_opnd(64, REG_CFP, offsetof(rb_control_frame_t, pc)), scratch_reg);
 }
@@ -183,6 +184,7 @@ jit_save_sp(jitstate_t* jit, ctx_t* ctx)
 {
     if (ctx->sp_offset != 0) {
         x86opnd_t stack_pointer = ctx_sp_opnd(ctx, 0);
+        codeblock_t* cb = jit->cb;
         lea(cb, REG_SP, stack_pointer);
         mov(cb, member_opnd(REG_CFP, rb_control_frame_t, sp), REG_SP);
         ctx->sp_offset = 0;
@@ -415,6 +417,7 @@ static uint8_t *
 yjit_side_exit(jitstate_t *jit, ctx_t *ctx)
 {
     if (!jit->side_exit_for_pc) {
+        codeblock_t* ocb = jit->ocb;
         uint32_t pos = yjit_gen_exit(jit->pc, ctx, ocb);
         jit->side_exit_for_pc = cb_get_ptr(ocb, pos);
     }
@@ -428,7 +431,7 @@ yjit_side_exit(jitstate_t *jit, ctx_t *ctx)
 // PC for the method isn't necessarily 0, but we always generated code that
 // assumes the entry point is 0.
 static void
-yjit_pc_guard(const rb_iseq_t *iseq)
+yjit_pc_guard(codeblock_t* cb, const rb_iseq_t *iseq)
 {
     RUBY_ASSERT(cb != NULL);
 
@@ -469,7 +472,6 @@ full_cfunc_return(rb_execution_context_t *ec, VALUE return_value)
     RUBY_ASSERT_ALWAYS(me->def->type == VM_METHOD_TYPE_CFUNC);
 
     // CHECK_CFP_CONSISTENCY("full_cfunc_return"); TODO revive this
-
 
     // Pop the C func's frame and fire the c_return TracePoint event
     // Note that this is the same order as vm_call_cfunc_with_frame().
@@ -518,7 +520,7 @@ Compile an interpreter entry block to be inserted into an iseq
 Returns `NULL` if compilation fails.
 */
 uint8_t *
-yjit_entry_prologue(const rb_iseq_t *iseq)
+yjit_entry_prologue(codeblock_t* cb, const rb_iseq_t *iseq)
 {
     RUBY_ASSERT(cb != NULL);
 
@@ -555,7 +557,7 @@ yjit_entry_prologue(const rb_iseq_t *iseq)
     // compiled for is the same PC that the interpreter wants us to run with.
     // If they don't match, then we'll take a side exit.
     if (iseq->body->param.flags.has_opt) {
-        yjit_pc_guard(iseq);
+        yjit_pc_guard(cb, iseq);
     }
 
     return code_ptr;
@@ -596,7 +598,7 @@ jit_jump_to_next_insn(jitstate_t *jit, const ctx_t *current_context)
 
     // Generate the jump instruction
     gen_direct_jump(
-        jit->block,
+        jit,
         &reset_depth,
         jump_block
     );
@@ -630,6 +632,8 @@ yjit_gen_block(block_t *block, rb_execution_context_t *ec)
 
     // Initialize a JIT state object
     jitstate_t jit = {
+        .cb = cb,
+        .ocb = ocb,
         .block = block,
         .iseq = iseq,
         .ec = ec
@@ -1476,7 +1480,7 @@ jit_chain_guard(enum jcc_kinds jcc, jitstate_t *jit, const ctx_t *ctx, uint8_t d
         deeper.chain_depth++;
 
         gen_branch(
-            jit->block,
+            jit,
             ctx,
             (blockid_t) { jit->iseq, jit->insn_idx },
             &deeper,
@@ -1683,7 +1687,7 @@ gen_getinstancevariable(jitstate_t* jit, ctx_t* ctx, codeblock_t* cb)
 {
     // Defer compilation so we can specialize on a runtime `self`
     if (!jit_at_current_insn(jit)) {
-        defer_compilation(jit->block, jit->insn_idx, ctx);
+        defer_compilation(jit, ctx);
         return YJIT_END_BLOCK;
     }
 
@@ -1907,7 +1911,7 @@ gen_fixnum_cmp(jitstate_t* jit, ctx_t* ctx, cmov_fn cmov_op)
 {
     // Defer compilation so we can specialize base on a runtime receiver
     if (!jit_at_current_insn(jit)) {
-        defer_compilation(jit->block, jit->insn_idx, ctx);
+        defer_compilation(jit, ctx);
         return YJIT_END_BLOCK;
     }
 
@@ -2053,7 +2057,7 @@ gen_opt_eq(jitstate_t* jit, ctx_t* ctx, codeblock_t* cb)
 {
     // Defer compilation so we can specialize base on a runtime receiver
     if (!jit_at_current_insn(jit)) {
-        defer_compilation(jit->block, jit->insn_idx, ctx);
+        defer_compilation(jit, ctx);
         return YJIT_END_BLOCK;
     }
 
@@ -2093,7 +2097,7 @@ gen_opt_aref(jitstate_t* jit, ctx_t* ctx, codeblock_t* cb)
 
     // Defer compilation so we can specialize base on a runtime receiver
     if (!jit_at_current_insn(jit)) {
-        defer_compilation(jit->block, jit->insn_idx, ctx);
+        defer_compilation(jit, ctx);
         return YJIT_END_BLOCK;
     }
 
@@ -2213,7 +2217,7 @@ gen_opt_aset(jitstate_t* jit, ctx_t* ctx, codeblock_t* cb)
 {
     // Defer compilation so we can specialize on a runtime `self`
     if (!jit_at_current_insn(jit)) {
-        defer_compilation(jit->block, jit->insn_idx, ctx);
+        defer_compilation(jit, ctx);
         return YJIT_END_BLOCK;
     }
 
@@ -2292,7 +2296,7 @@ gen_opt_and(jitstate_t* jit, ctx_t* ctx, codeblock_t* cb)
 {
     // Defer compilation so we can specialize on a runtime `self`
     if (!jit_at_current_insn(jit)) {
-        defer_compilation(jit->block, jit->insn_idx, ctx);
+        defer_compilation(jit, ctx);
         return YJIT_END_BLOCK;
     }
 
@@ -2335,7 +2339,7 @@ gen_opt_or(jitstate_t* jit, ctx_t* ctx, codeblock_t* cb)
 {
     // Defer compilation so we can specialize on a runtime `self`
     if (!jit_at_current_insn(jit)) {
-        defer_compilation(jit->block, jit->insn_idx, ctx);
+        defer_compilation(jit, ctx);
         return YJIT_END_BLOCK;
     }
 
@@ -2378,7 +2382,7 @@ gen_opt_minus(jitstate_t* jit, ctx_t* ctx, codeblock_t* cb)
 {
     // Defer compilation so we can specialize on a runtime `self`
     if (!jit_at_current_insn(jit)) {
-        defer_compilation(jit->block, jit->insn_idx, ctx);
+        defer_compilation(jit, ctx);
         return YJIT_END_BLOCK;
     }
 
@@ -2423,7 +2427,7 @@ gen_opt_plus(jitstate_t* jit, ctx_t* ctx, codeblock_t* cb)
 {
     // Defer compilation so we can specialize on a runtime `self`
     if (!jit_at_current_insn(jit)) {
-        defer_compilation(jit->block, jit->insn_idx, ctx);
+        defer_compilation(jit, ctx);
         return YJIT_END_BLOCK;
     }
 
@@ -2648,7 +2652,7 @@ gen_branchif(jitstate_t* jit, ctx_t* ctx, codeblock_t* cb)
 
     // Generate the branch instructions
     gen_branch(
-        jit->block,
+        jit,
         ctx,
         jump_block,
         ctx,
@@ -2705,7 +2709,7 @@ gen_branchunless(jitstate_t* jit, ctx_t* ctx, codeblock_t* cb)
 
     // Generate the branch instructions
     gen_branch(
-        jit->block,
+        jit,
         ctx,
         jump_block,
         ctx,
@@ -2761,7 +2765,7 @@ gen_branchnil(jitstate_t* jit, ctx_t* ctx, codeblock_t* cb)
 
     // Generate the branch instructions
     gen_branch(
-        jit->block,
+        jit,
         ctx,
         jump_block,
         ctx,
@@ -2790,7 +2794,7 @@ gen_jump(jitstate_t* jit, ctx_t* ctx, codeblock_t* cb)
 
     // Generate the jump instruction
     gen_direct_jump(
-        jit->block,
+        jit,
         ctx,
         jump_block
     );
@@ -3515,7 +3519,7 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
 
     // Write the JIT return address on the callee frame
     gen_branch(
-        jit->block,
+        jit,
         ctx,
         return_block,
         &return_ctx,
@@ -3532,7 +3536,7 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
 
     // Directly jump to the entry point of the callee
     gen_direct_jump(
-        jit->block,
+        jit,
         &callee_ctx,
         (blockid_t){ iseq, start_pc_offset }
     );
@@ -3584,7 +3588,7 @@ gen_send_general(jitstate_t *jit, ctx_t *ctx, struct rb_call_data *cd, rb_iseq_t
 
     // Defer compilation so we can specialize on class of receiver
     if (!jit_at_current_insn(jit)) {
-        defer_compilation(jit->block, jit->insn_idx, ctx);
+        defer_compilation(jit, ctx);
         return YJIT_END_BLOCK;
     }
 
@@ -3717,7 +3721,7 @@ gen_invokesuper(jitstate_t* jit, ctx_t* ctx, codeblock_t* cb)
 
     // Defer compilation so we can specialize on class of receiver
     if (!jit_at_current_insn(jit)) {
-        defer_compilation(jit->block, jit->insn_idx, ctx);
+        defer_compilation(jit, ctx);
         return YJIT_END_BLOCK;
     }
 
@@ -4064,30 +4068,52 @@ gen_opt_getinlinecache(jitstate_t* jit, ctx_t* ctx, codeblock_t* cb)
     // See vm_ic_hit_p(). The same conditions are checked in yjit_constant_ic_update().
     struct iseq_inline_constant_cache_entry *ice = ic->entry;
     if (!ice || // cache not filled
-        ice->ic_serial != ruby_vm_global_constant_state || // cache out of date
-        ice->ic_cref /* cache only valid for certain lexical scopes */) {
+        ice->ic_serial != ruby_vm_global_constant_state /* cache out of date */) {
         // In these cases, leave a block that unconditionally side exits
         // for the interpreter to invalidate.
         return YJIT_CANT_COMPILE;
     }
 
-    // Optimize for single ractor mode.
-    // FIXME: This leaks when st_insert raises NoMemoryError
-    if (!assume_single_ractor_mode(jit->block)) return YJIT_CANT_COMPILE;
+    if (ice->ic_cref) {
+        // Cache is keyed on a certain lexical scope. Use the interpreter's cache.
+        uint8_t *side_exit = yjit_side_exit(jit, ctx);
 
-    // Invalidate output code on any and all constant writes
-    // FIXME: This leaks when st_insert raises NoMemoryError
-    assume_stable_global_constant_state(jit->block);
+        // Call function to verify the cache
+        bool rb_vm_ic_hit_p(IC ic, const VALUE *reg_ep);
+        mov(cb, C_ARG_REGS[0], const_ptr_opnd((void *)ic));
+        mov(cb, C_ARG_REGS[1], member_opnd(REG_CFP, rb_control_frame_t, ep));
+        call_ptr(cb, REG0, (void *)rb_vm_ic_hit_p);
 
-    val_type_t type = yjit_type_of_value(ice->value);
-    x86opnd_t stack_top = ctx_stack_push(ctx, type);
-    jit_mov_gc_ptr(jit, cb, REG0, ice->value);
-    mov(cb, stack_top, REG0);
+        // Check the result. _Bool is one byte in SysV.
+        test(cb, AL, AL);
+        jz_ptr(cb, COUNTED_EXIT(side_exit, opt_getinlinecache_miss));
+
+        // Push ic->entry->value
+        mov(cb, REG0, const_ptr_opnd((void *)ic));
+        mov(cb, REG0, member_opnd(REG0, struct iseq_inline_constant_cache, entry));
+        x86opnd_t stack_top = ctx_stack_push(ctx, TYPE_UNKNOWN);
+        mov(cb, REG0, member_opnd(REG0, struct iseq_inline_constant_cache_entry, value));
+        mov(cb, stack_top, REG0);
+    }
+    else {
+        // Optimize for single ractor mode.
+        // FIXME: This leaks when st_insert raises NoMemoryError
+        if (!assume_single_ractor_mode(jit->block)) return YJIT_CANT_COMPILE;
+
+        // Invalidate output code on any and all constant writes
+        // FIXME: This leaks when st_insert raises NoMemoryError
+        assume_stable_global_constant_state(jit->block);
+
+        val_type_t type = yjit_type_of_value(ice->value);
+        x86opnd_t stack_top = ctx_stack_push(ctx, type);
+        jit_mov_gc_ptr(jit, cb, REG0, ice->value);
+        mov(cb, stack_top, REG0);
+    }
 
     // Jump over the code for filling the cache
     uint32_t jump_idx = jit_next_insn_idx(jit) + (int32_t)jump_offset;
     gen_direct_jump(
-        jit->block,
+        jit,
         ctx,
         (blockid_t){ .iseq = jit->iseq, .idx = jump_idx }
     );
