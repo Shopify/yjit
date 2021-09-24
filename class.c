@@ -248,6 +248,12 @@ rb_class_new(VALUE super)
     return rb_class_boot(super);
 }
 
+VALUE
+rb_class_s_alloc(VALUE klass)
+{
+    return rb_class_boot(0);
+}
+
 static void
 clone_method(VALUE old_klass, VALUE new_klass, ID mid, const rb_method_entry_t *me)
 {
@@ -345,12 +351,47 @@ copy_tables(VALUE clone, VALUE orig)
 
 static bool ensure_origin(VALUE klass);
 
+/**
+ * If this flag is set, that module is allocated but not initialized yet.
+ */
+enum {RMODULE_ALLOCATED_BUT_NOT_INITIALIZED = RUBY_FL_USER5};
+
+static inline bool
+RMODULE_UNINITIALIZED(VALUE module)
+{
+    return FL_TEST_RAW(module, RMODULE_ALLOCATED_BUT_NOT_INITIALIZED);
+}
+
+void
+rb_module_set_initialized(VALUE mod)
+{
+    FL_UNSET_RAW(mod, RMODULE_ALLOCATED_BUT_NOT_INITIALIZED);
+    /* no more re-initialization */
+}
+
+void
+rb_module_check_initializable(VALUE mod)
+{
+    if (!RMODULE_UNINITIALIZED(mod)) {
+        rb_raise(rb_eTypeError, "already initialized module");
+    }
+    RB_OBJ_WRITE(mod, &RCLASS(mod)->super, 0);
+}
+
 /* :nodoc: */
 VALUE
 rb_mod_init_copy(VALUE clone, VALUE orig)
 {
-    if (RB_TYPE_P(clone, T_CLASS)) {
+    switch (BUILTIN_TYPE(clone)) {
+      case T_CLASS:
+      case T_ICLASS:
         class_init_copy_check(clone, orig);
+        break;
+      case T_MODULE:
+        rb_module_check_initializable(clone);
+        break;
+      default:
+        break;
     }
     if (!OBJ_INIT_COPY(clone, orig)) return clone;
 
@@ -775,6 +816,15 @@ rb_define_class_id_under(VALUE outer, ID id, VALUE super)
 }
 
 VALUE
+rb_module_s_alloc(VALUE klass)
+{
+    VALUE mod = class_alloc(T_MODULE, klass);
+    RCLASS_M_TBL_INIT(mod);
+    FL_SET(mod, RMODULE_ALLOCATED_BUT_NOT_INITIALIZED);
+    return mod;
+}
+
+VALUE
 rb_module_new(void)
 {
     VALUE mdl = class_alloc(T_MODULE, rb_cModule);
@@ -878,6 +928,7 @@ ensure_includable(VALUE klass, VALUE module)
 {
     rb_class_modify_check(klass);
     Check_Type(module, T_MODULE);
+    rb_module_set_initialized(module);
     if (!NIL_P(rb_refinement_module_get_refined_class(module))) {
 	rb_raise(rb_eArgError, "refinement module is not allowed");
     }

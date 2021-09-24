@@ -573,7 +573,26 @@ w_uclass(VALUE obj, VALUE super, struct dump_arg *arg)
     }
 }
 
-#define to_be_skipped_id(id) (id == rb_id_encoding() || id == s_encoding_short || id == s_ruby2_keywords_flag || !rb_id2str(id))
+static bool
+rb_hash_ruby2_keywords_p(VALUE obj)
+{
+    return (RHASH(obj)->basic.flags & RHASH_PASS_AS_KEYWORDS) != 0;
+}
+
+static void
+rb_hash_ruby2_keywords(VALUE obj)
+{
+    RHASH(obj)->basic.flags |= RHASH_PASS_AS_KEYWORDS;
+}
+
+static inline bool
+to_be_skipped_id(const ID id)
+{
+    if (id == s_encoding_short) return true;
+    if (id == s_ruby2_keywords_flag) return true;
+    if (id == rb_id_encoding()) return true;
+    return !rb_id2str(id);
+}
 
 struct w_ivar_arg {
     struct dump_call_arg *dump;
@@ -613,7 +632,9 @@ static int
 obj_count_ivars(st_data_t key, st_data_t val, st_data_t a)
 {
     ID id = (ID)key;
-    if (!to_be_skipped_id(id)) ++*(st_index_t *)a;
+    if (!to_be_skipped_id(id) && UNLIKELY(!++*(st_index_t *)a)) {
+        rb_raise(rb_eRuntimeError, "too many instance variables");
+    }
     return ST_CONTINUE;
 }
 
@@ -672,9 +693,7 @@ w_encoding(VALUE encname, struct dump_call_arg *arg)
 static st_index_t
 has_ivars(VALUE obj, VALUE encname, VALUE *ivobj)
 {
-    st_index_t enc = !NIL_P(encname);
-    st_index_t num = 0;
-    st_index_t ruby2_keywords_flag = 0;
+    st_index_t num = !NIL_P(encname);
 
     if (SPECIAL_CONST_P(obj)) goto generic;
     switch (BUILTIN_TYPE(obj)) {
@@ -683,15 +702,15 @@ has_ivars(VALUE obj, VALUE encname, VALUE *ivobj)
       case T_MODULE:
 	break; /* counted elsewhere */
       case T_HASH:
-        ruby2_keywords_flag = RHASH(obj)->basic.flags & RHASH_PASS_AS_KEYWORDS ? 1 : 0;
+        if (rb_hash_ruby2_keywords_p(obj)) ++num;
         /* fall through */
       default:
       generic:
 	rb_ivar_foreach(obj, obj_count_ivars, (st_data_t)&num);
-	if (ruby2_keywords_flag || num) *ivobj = obj;
+	if (num) *ivobj = obj;
     }
 
-    return num + enc + ruby2_keywords_flag;
+    return num;
 }
 
 static void
@@ -711,7 +730,7 @@ w_ivar(st_index_t num, VALUE ivobj, VALUE encname, struct dump_call_arg *arg)
 {
     w_long(num, arg->arg);
     num -= w_encoding(encname, arg);
-    if (RB_TYPE_P(ivobj, T_HASH) && (RHASH(ivobj)->basic.flags & RHASH_PASS_AS_KEYWORDS)) {
+    if (RB_TYPE_P(ivobj, T_HASH) && rb_hash_ruby2_keywords_p(ivobj)) {
         int limit = arg->limit;
         if (limit >= 0) ++limit;
         w_symbol(ID2SYM(s_ruby2_keywords_flag), arg->arg);
@@ -1418,17 +1437,20 @@ sym2encidx(VALUE sym, VALUE val)
 }
 
 static int
-ruby2_keywords_flag_check(VALUE sym)
+symname_equal(VALUE sym, const char *name, size_t nlen)
 {
     const char *p;
     long l;
+    if (rb_enc_get_index(sym) != ENCINDEX_US_ASCII) return 0;
     RSTRING_GETMEM(sym, p, l);
-    if (l <= 0) return 0;
-    if (name_equal(name_s_ruby2_keywords_flag, rb_strlen_lit(name_s_ruby2_keywords_flag), p, 1)) {
-        return 1;
-    }
-    return 0;
+    return name_equal(name, nlen, p, l);
 }
+
+#define BUILD_ASSERT_POSITIVE(n) \
+    /* make 0 negative to workaround the "zero size array" GCC extention, */ \
+    ((sizeof(char [2*(ssize_t)(n)-1])+1)/2) /* assuming no overflow */
+#define symname_equal_lit(sym, sym_name) \
+    symname_equal(sym, sym_name, BUILD_ASSERT_POSITIVE(rb_strlen_lit(sym_name)))
 
 static VALUE
 r_symlink(struct load_arg *arg)
@@ -1459,7 +1481,13 @@ r_symreal(struct load_arg *arg, int ivar)
 	    idx = sym2encidx(sym, r_object(arg));
 	}
     }
-    if (idx > 0) rb_enc_associate_index(s, idx);
+    if (idx > 0) {
+        rb_enc_associate_index(s, idx);
+        if (rb_enc_str_coderange(s) == ENC_CODERANGE_BROKEN) {
+            rb_raise(rb_eArgError, "invalid byte sequence in %s: %+"PRIsVALUE,
+                     rb_enc_name(rb_enc_from_index(idx)), s);
+        }
+    }
 
     return s;
 }
@@ -1582,9 +1610,9 @@ r_ivar(VALUE obj, int *has_encoding, struct load_arg *arg)
                 }
 		if (has_encoding) *has_encoding = TRUE;
 	    }
-	    else if (ruby2_keywords_flag_check(sym)) {
+	    else if (symname_equal_lit(sym, name_s_ruby2_keywords_flag)) {
                 if (RB_TYPE_P(obj, T_HASH)) {
-                    RHASH(obj)->basic.flags |= RHASH_PASS_AS_KEYWORDS;
+                    rb_hash_ruby2_keywords(obj);
                 }
                 else {
                     rb_raise(rb_eArgError, "ruby2_keywords flag is given but %"PRIsVALUE" is not a Hash", obj);
@@ -1690,6 +1718,9 @@ r_object0(struct load_arg *arg, int *ivp, VALUE extmod)
 
 	    v = r_object0(arg, &ivar, extmod);
 	    if (ivar) r_ivar(v, NULL, arg);
+	    if (RB_TYPE_P(v, T_STRING)) {
+	        v = r_leave(v, arg);
+	    }
 	}
 	break;
 
@@ -1819,7 +1850,9 @@ r_object0(struct load_arg *arg, int *ivp, VALUE extmod)
 
       case TYPE_STRING:
 	v = r_entry(r_string(arg), arg);
-        v = r_leave(v, arg);
+	if (!ivp) {
+	    v = r_leave(v, arg);
+	}
 	break;
 
       case TYPE_REGEXP:

@@ -4116,7 +4116,7 @@ compile_keyword_arg(rb_iseq_t *iseq, LINK_ANCHOR *const ret,
             seen_nodes++;
 
 	    assert(nd_type(node) == NODE_LIST);
-            if (key_node && nd_type(key_node) == NODE_LIT && RB_TYPE_P(key_node->nd_lit, T_SYMBOL)) {
+            if (key_node && nd_type(key_node) == NODE_LIT && SYMBOL_P(key_node->nd_lit)) {
 		/* can be keywords */
 	    }
 	    else {
@@ -4564,7 +4564,7 @@ rb_node_case_when_optimizable_literal(const NODE *const node)
       case NODE_LIT: {
 	VALUE v = node->nd_lit;
 	double ival;
-	if (RB_TYPE_P(v, T_FLOAT) &&
+	if (RB_FLOAT_TYPE_P(v) &&
 	    modf(RFLOAT_VALUE(v), &ival) == 0.0) {
 	    return FIXABLE(ival) ? LONG2FIX((long)ival) : rb_dbl2big(ival);
 	}
@@ -12435,8 +12435,8 @@ ibf_dump_object_object(struct ibf_dump *dump, VALUE obj)
     current_offset = ibf_dump_pos(dump);
 
     if (SPECIAL_CONST_P(obj) &&
-        ! (RB_TYPE_P(obj, T_SYMBOL) ||
-           RB_TYPE_P(obj, T_FLOAT))) {
+        ! (SYMBOL_P(obj) ||
+           RB_FLOAT_TYPE_P(obj))) {
         obj_header.special_const = TRUE;
         obj_header.frozen = TRUE;
         obj_header.internal = TRUE;

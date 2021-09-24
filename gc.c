@@ -3417,7 +3417,7 @@ obj_free(rb_objspace_t *objspace, VALUE obj)
 static int
 object_id_cmp(st_data_t x, st_data_t y)
 {
-    if (RB_TYPE_P(x, T_BIGNUM)) {
+    if (RB_BIGNUM_TYPE_P(x)) {
         return !rb_big_eql(x, y);
     }
     else {
@@ -3428,7 +3428,7 @@ object_id_cmp(st_data_t x, st_data_t y)
 static st_index_t
 object_id_hash(st_data_t n)
 {
-    if (RB_TYPE_P(n, T_BIGNUM)) {
+    if (RB_BIGNUM_TYPE_P(n)) {
         return FIX2LONG(rb_big_hash(n));
     }
     else {
@@ -5414,6 +5414,7 @@ gc_page_sweep(rb_objspace_t *objspace, rb_size_pool_t *size_pool, rb_heap_t *hea
     }
 
     sweep_page->flags.before_sweep = FALSE;
+    sweep_page->free_slots = 0;
 
     p = sweep_page->start;
     bits = sweep_page->mark_bits;
@@ -5462,7 +5463,7 @@ gc_page_sweep(rb_objspace_t *objspace, rb_size_pool_t *size_pool, rb_heap_t *hea
 		   sweep_page->total_slots,
 		   ctx->freed_slots, ctx->empty_slots, ctx->final_slots);
 
-    sweep_page->free_slots = ctx->freed_slots + ctx->empty_slots;
+    sweep_page->free_slots += ctx->freed_slots + ctx->empty_slots;
     objspace->profile.total_freed_objects += ctx->freed_slots;
 
     if (heap_pages_deferred_final && !finalizing) {
@@ -5818,7 +5819,7 @@ gc_sweep_continue(rb_objspace_t *objspace, rb_size_pool_t *sweep_size_pool, rb_h
 }
 
 static void
-invalidate_moved_plane(rb_objspace_t *objspace, struct heap_page *page, uintptr_t p, bits_t bitset, struct gc_sweep_context *ctx)
+invalidate_moved_plane(rb_objspace_t *objspace, struct heap_page *page, uintptr_t p, bits_t bitset)
 {
     if (bitset) {
         do {
@@ -5832,19 +5833,18 @@ invalidate_moved_plane(rb_objspace_t *objspace, struct heap_page *page, uintptr_
 
                     CLEAR_IN_BITMAP(GET_HEAP_PINNED_BITS(forwarding_object), forwarding_object);
 
+                    bool from_freelist = FL_TEST_RAW(forwarding_object, FL_FROM_FREELIST);
                     object = rb_gc_location(forwarding_object);
-
-                    if (FL_TEST(forwarding_object, FL_FROM_FREELIST)) {
-                        ctx->empty_slots++; /* already freed */
-                    }
-                    else {
-                        ctx->freed_slots++;
-                    }
 
                     gc_move(objspace, object, forwarding_object, page->size_pool->slot_size);
                     /* forwarding_object is now our actual object, and "object"
                      * is the free slot for the original page */
-                    heap_page_add_freeobj(objspace, GET_HEAP_PAGE(object), object);
+                    struct heap_page *orig_page = GET_HEAP_PAGE(object);
+                    orig_page->free_slots++;
+                    if (!from_freelist) {
+                        objspace->profile.total_freed_objects++;
+                    }
+                    heap_page_add_freeobj(objspace, orig_page, object);
 
                     GC_ASSERT(MARKED_IN_BITMAP(GET_HEAP_MARK_BITS(forwarding_object), forwarding_object));
                     GC_ASSERT(BUILTIN_TYPE(forwarding_object) != T_MOVED);
@@ -5870,16 +5870,10 @@ invalidate_moved_page(rb_objspace_t *objspace, struct heap_page *page)
 
     p = page->start;
 
-    struct gc_sweep_context ctx;
-    ctx.page = page;
-    ctx.final_slots = 0;
-    ctx.freed_slots = 0;
-    ctx.empty_slots = 0;
-
     // Skip out of range slots at the head of the page
     bitset = pin_bits[0] & ~mark_bits[0];
     bitset >>= NUM_IN_PAGE(p);
-    invalidate_moved_plane(objspace, page, (uintptr_t)p, bitset, &ctx);
+    invalidate_moved_plane(objspace, page, (uintptr_t)p, bitset);
     p += (BITS_BITLENGTH - NUM_IN_PAGE(p));
 
     for (i=1; i < HEAP_PAGE_BITMAP_LIMIT; i++) {
@@ -5887,12 +5881,9 @@ invalidate_moved_page(rb_objspace_t *objspace, struct heap_page *page)
          * to indicate there is a moved object in this slot. */
         bitset = pin_bits[i] & ~mark_bits[i];
 
-        invalidate_moved_plane(objspace, page, (uintptr_t)p, bitset, &ctx);
+        invalidate_moved_plane(objspace, page, (uintptr_t)p, bitset);
         p += BITS_BITLENGTH;
     }
-
-    page->free_slots += (ctx.empty_slots + ctx.freed_slots);
-    objspace->profile.total_freed_objects += ctx.freed_slots;
 }
 
 static void
@@ -8890,7 +8881,7 @@ ready_to_gc(rb_objspace_t *objspace)
 }
 
 static void
-gc_reset_malloc_info(rb_objspace_t *objspace)
+gc_reset_malloc_info(rb_objspace_t *objspace, bool full_mark)
 {
     gc_prof_set_malloc_info(objspace);
     {
@@ -8924,7 +8915,7 @@ gc_reset_malloc_info(rb_objspace_t *objspace)
 
     /* reset oldmalloc info */
 #if RGENGC_ESTIMATE_OLDMALLOC
-    if (!is_full_marking(objspace)) {
+    if (!full_mark) {
 	if (objspace->rgengc.oldmalloc_increase > objspace->rgengc.oldmalloc_increase_limit) {
 	    objspace->rgengc.need_major_gc |= GPR_FLAG_MAJOR_BY_OLDMALLOC;
 	    objspace->rgengc.oldmalloc_increase_limit =
@@ -9080,7 +9071,7 @@ gc_start(rb_objspace_t *objspace, unsigned int reason)
     objspace->profile.total_allocated_objects_at_gc_start = objspace->total_allocated_objects;
     objspace->profile.heap_used_at_gc_start = heap_allocated_pages;
     gc_prof_setup_new_record(objspace, reason);
-    gc_reset_malloc_info(objspace);
+    gc_reset_malloc_info(objspace, do_full_mark);
     rb_transient_heap_start_marking(do_full_mark);
 
     gc_event_hook(objspace, RUBY_INTERNAL_EVENT_GC_START, 0 /* TODO: pass minor/immediate flag? */);

@@ -59,23 +59,27 @@ module IRB
             File.join(s.full_gem_path, p)
           end
         }
-      }.flatten
-      (gem_paths + $LOAD_PATH).uniq.sort
+      }.flatten if defined?(Gem::Specification)
+      (gem_paths.to_a | $LOAD_PATH).sort
     end
 
     def self.retrieve_files_to_require_from_load_path
-      @@files_from_load_path ||= retrieve_gem_and_system_load_path.map { |path|
-        begin
-          Dir.glob("**/*.{rb,#{RbConfig::CONFIG['DLEXT']}}", base: path)
-        rescue Errno::ENOENT
-          []
-        end
-      }.inject([]) { |result, names|
-        shortest, *rest = names.map{ |n| n.sub(/\.(rb|#{RbConfig::CONFIG['DLEXT']})\z/, '') }.sort
-        result.unshift(shortest) if shortest
-        result.concat(rest)
-        result
-      }.uniq
+      @@files_from_load_path ||=
+        (
+          shortest = []
+          rest = retrieve_gem_and_system_load_path.each_with_object([]) { |path, result|
+            begin
+              names = Dir.glob("**/*.{rb,#{RbConfig::CONFIG['DLEXT']}}", base: path)
+            rescue Errno::ENOENT
+              nil
+            end
+            next if names.empty?
+            names.map! { |n| n.sub(/\.(rb|#{RbConfig::CONFIG['DLEXT']})\z/, '') }.sort!
+            shortest << names.shift
+            result.concat(names)
+          }
+          shortest.sort! | rest
+        )
     end
 
     def self.retrieve_files_to_require_relative_from_current_dir
@@ -188,7 +192,7 @@ module IRB
         sym = $1
         candidates = Symbol.all_symbols.collect do |s|
           ":" + s.id2name.encode(Encoding.default_external)
-        rescue Encoding::UndefinedConversionError
+        rescue EncodingError
           # ignore
         end
         candidates.grep(/^#{Regexp.quote(sym)}/)
@@ -286,7 +290,7 @@ module IRB
           all_gvars.grep(Regexp.new(Regexp.quote(gvar)))
         end
 
-      when /^([^."].*)(\.|::)([^.]*)$/
+      when /^([^.:"].*)(\.|::)([^.]*)$/
         # variable.func or func.func
         receiver = $1
         sep = $2
