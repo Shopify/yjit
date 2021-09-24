@@ -223,6 +223,16 @@ rb_str_make_independent(VALUE str)
     }
 }
 
+void
+rb_debug_rstring_null_ptr(const char *func)
+{
+    fprintf(stderr, "%s is returning NULL!! "
+            "SIGSEGV is highly expected to follow immediately. "
+            "If you could reproduce, attach your debugger here, "
+            "and look at the passed string.",
+	    func);
+}
+
 /* symbols for [up|down|swap]case/capitalize options */
 static VALUE sym_ascii, sym_turkic, sym_lithuanian, sym_fold;
 
@@ -4620,8 +4630,7 @@ rb_str_include_range_p(VALUE beg, VALUE end, VALUE val, VALUE exclusive)
 
 		if (ISASCII(b) && ISASCII(e) && ISASCII(v)) {
 		    if (b <= v && v < e) return Qtrue;
-		    if (!RTEST(exclusive) && v == e) return Qtrue;
-		    return Qfalse;
+		    return RBOOL(!RTEST(exclusive) && v == e);
 		}
 	    }
 	}
@@ -10822,7 +10831,7 @@ enc_str_scrub(rb_encoding *enc, VALUE str, VALUE repl, int cr)
  *
  *     "abc\u3042\x81".scrub #=> "abc\u3042\uFFFD"
  *     "abc\u3042\x81".scrub("*") #=> "abc\u3042*"
- *     "abc\u3042\xE3\x80".scrub{|bytes| '<'+bytes.unpack('H*')[0]+'>' } #=> "abc\u3042<e380>"
+ *     "abc\u3042\xE3\x80".scrub{|bytes| '<'+bytes.unpack1('H*')+'>' } #=> "abc\u3042<e380>"
  */
 static VALUE
 str_scrub(int argc, VALUE *argv, VALUE str)
@@ -10844,7 +10853,7 @@ str_scrub(int argc, VALUE *argv, VALUE str)
  *
  *     "abc\u3042\x81".scrub! #=> "abc\u3042\uFFFD"
  *     "abc\u3042\x81".scrub!("*") #=> "abc\u3042*"
- *     "abc\u3042\xE3\x80".scrub!{|bytes| '<'+bytes.unpack('H*')[0]+'>' } #=> "abc\u3042<e380>"
+ *     "abc\u3042\xE3\x80".scrub!{|bytes| '<'+bytes.unpack1('H*')+'>' } #=> "abc\u3042<e380>"
  */
 static VALUE
 str_scrub_bang(int argc, VALUE *argv, VALUE str)

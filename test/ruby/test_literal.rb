@@ -506,6 +506,30 @@ class TestRubyLiteral < Test::Unit::TestCase
     assert_equal(100, h['a'])
   end
 
+  FOO = "foo"
+
+  def test_hash_value_omission
+    x = 1
+    y = 2
+    assert_equal({x: 1, y: 2}, {x:, y:})
+    assert_equal({x: 1, y: 2, z: 3}, {x:, y:, z: 3})
+    assert_equal({one: 1, two: 2}, {one:, two:})
+    b = binding
+    b.local_variable_set(:if, "if")
+    b.local_variable_set(:self, "self")
+    assert_equal({FOO: "foo", if: "if", self: "self"},
+                 eval('{FOO:, if:, self:}', b))
+    assert_syntax_error('{"#{x}":}', /'\}'/)
+  end
+
+  private def one
+    1
+  end
+
+  private def two
+    2
+  end
+
   def test_range
     assert_instance_of Range, (1..2)
     assert_equal(1..2, 1..2)

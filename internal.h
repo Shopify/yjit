@@ -95,8 +95,8 @@ RUBY_SYMBOL_EXPORT_END
 
 // same as rp, but add message header
 #define rp_m(msg, obj) do { \
-    fprintf(stderr, "%s", (msg)); \
-    rb_obj_info_dump((VALUE)obj); \
+    fputs((msg), stderr); \
+    rb_obj_info_dump((VALUE)(obj)); \
 } while (0)
 
 // `ruby_debug_breakpoint()` does nothing,
@@ -104,5 +104,6 @@ RUBY_SYMBOL_EXPORT_END
 #define bp() ruby_debug_breakpoint()
 
 #define RBOOL(v) ((v) ? Qtrue : Qfalse)
+#define RB_BIGNUM_TYPE_P(x) RB_TYPE_P((x), T_BIGNUM)
 
 #endif /* RUBY_INTERNAL_H */
