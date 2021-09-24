@@ -33,41 +33,54 @@ Note that each entry is kept to a minimum, see links for details.
     foo[0] = bar
     ```
 
-  The following evaluation order is used:
+    The following evaluation order is used:
 
-  1. `foo`
-  2. `bar`
-  3. `[]=` called on the result of `foo`
+    1. `foo`
+    2. `bar`
+    3. `[]=` called on the result of `foo`
 
-  In Ruby before 3.1.0, multiple assignment did not follow this
-  evaluation order.  With this code:
+    In Ruby before 3.1.0, multiple assignment did not follow this
+    evaluation order.  With this code:
 
-    ```ruby
-    foo[0], bar.baz = a, b
-    ```
+      ```ruby
+      foo[0], bar.baz = a, b
+      ```
 
-  Versions of Ruby before 3.1.0 would evaluate in the following
-  order
+    Versions of Ruby before 3.1.0 would evaluate in the following
+    order
 
-  1. `a`
-  2. `b`
-  3. `foo`
-  4. `[]=` called on the result of `foo`
-  5. `bar`
-  6. `baz=` called on the result of `bar`
+    1. `a`
+    2. `b`
+    3. `foo`
+    4. `[]=` called on the result of `foo`
+    5. `bar`
+    6. `baz=` called on the result of `bar`
 
-  Starting in Ruby 3.1.0, evaluation order is now consistent with
-  single assignment, with the left hand side being evaluated before
-  the right hand side:
+    Starting in Ruby 3.1.0, evaluation order is now consistent with
+    single assignment, with the left hand side being evaluated before
+    the right hand side:
 
-  1. `foo`
-  2. `bar`
-  3. `a`
-  4. `b`
-  5. `[]=` called on the result of `foo`
-  6. `baz=` called on the result of `bar`
+    1. `foo`
+    2. `bar`
+    3. `a`
+    4. `b`
+    5. `[]=` called on the result of `foo`
+    6. `baz=` called on the result of `bar`
 
-  [[Bug #4443]]
+    [[Bug #4443]]
+
+* Values in Hash literals and keyword arguments can be omitted.
+  [[Feature #14579]]
+
+  For example,
+
+    * `{x:, y:}` is a syntax sugar of `{x: x, y: y}`.
+    * `foo(x:, y:)` is a syntax sugar of `foo(x: x, y: y)`.
+
+  Constant names, local variable names, and method names are allowed as
+  key names.  Note that a reserved word is considered as a local
+  variable or method name even if it's a pseudo variable name such as
+  `self`.
 
 ## Command line options
 
@@ -97,6 +110,12 @@ Outstanding ones only.
 * Integer
 
     * Integer.try_convert is added. [[Feature #15211]]
+
+* MatchData
+
+    * MatchData#match is added [[Feature #18172]]
+
+    * MatchData#match_length is added [[Feature #18172]]
 
 * Module
 
@@ -172,6 +191,8 @@ Excluding feature bug fixes.
 
 ## C API updates
 
+* Documented. [[GH-4815]]
+
 ## Implementation improvements
 
 ### JIT
@@ -210,6 +231,7 @@ Excluding feature bug fixes.
 [Bug #4443]:      https://bugs.ruby-lang.org/issues/4443
 [Feature #12194]: https://bugs.ruby-lang.org/issues/12194
 [Feature #14256]: https://bugs.ruby-lang.org/issues/14256
+[Feature #14579]: https://bugs.ruby-lang.org/issues/14579
 [Feature #15198]: https://bugs.ruby-lang.org/issues/15198
 [Feature #15211]: https://bugs.ruby-lang.org/issues/15211
 [Feature #16043]: https://bugs.ruby-lang.org/issues/16043
@@ -233,3 +255,5 @@ Excluding feature bug fixes.
 [Feature #18008]: https://bugs.ruby-lang.org/issues/18008
 [Feature #18015]: https://bugs.ruby-lang.org/issues/18015
 [Feature #18029]: https://bugs.ruby-lang.org/issues/18029
+[Feature #18172]: https://bugs.ruby-lang.org/issues/18172
+[GH-4815]: https://github.com/ruby/ruby/pull/4815

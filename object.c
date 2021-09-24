@@ -1766,20 +1766,7 @@ rb_mod_cmp(VALUE mod, VALUE arg)
     return INT2FIX(1);
 }
 
-static VALUE
-rb_module_s_alloc(VALUE klass)
-{
-    VALUE mod = rb_module_new();
-
-    RBASIC_SET_CLASS(mod, klass);
-    return mod;
-}
-
-static VALUE
-rb_class_s_alloc(VALUE klass)
-{
-    return rb_class_boot(0);
-}
+static VALUE rb_mod_initialize_exec(VALUE module);
 
 /*
  *  call-seq:
@@ -1809,6 +1796,13 @@ rb_class_s_alloc(VALUE klass)
 
 static VALUE
 rb_mod_initialize(VALUE module)
+{
+    rb_module_check_initializable(module);
+    return rb_mod_initialize_exec(module);
+}
+
+static VALUE
+rb_mod_initialize_exec(VALUE module)
 {
     if (rb_block_given_p()) {
 	rb_mod_module_exec(1, &module, module);
@@ -1879,7 +1873,7 @@ rb_class_initialize(int argc, VALUE *argv, VALUE klass)
     RCLASS_SET_SUPER(klass, super);
     rb_make_metaclass(klass, RBASIC(super)->klass);
     rb_class_inherited(super, klass);
-    rb_mod_initialize(klass);
+    rb_mod_initialize_exec(klass);
 
     return klass;
 }
@@ -3425,7 +3419,7 @@ rb_str_to_dbl(VALUE str, int badcheck)
     (FIXNUM_P(x) ? fix2dbl_without_to_f(x) : big2dbl_without_to_f(x))
 #define num2dbl_without_to_f(x) \
     (FIXNUM_P(x) ? fix2dbl_without_to_f(x) : \
-     RB_TYPE_P(x, T_BIGNUM) ? big2dbl_without_to_f(x) : \
+     RB_BIGNUM_TYPE_P(x) ? big2dbl_without_to_f(x) : \
      (Check_Type(x, T_FLOAT), RFLOAT_VALUE(x)))
 static inline double
 rat2dbl_without_to_f(VALUE x)
@@ -3564,7 +3558,7 @@ rb_to_float(VALUE val)
 VALUE
 rb_check_to_float(VALUE val)
 {
-    if (RB_TYPE_P(val, T_FLOAT)) return val;
+    if (RB_FLOAT_TYPE_P(val)) return val;
     if (!rb_obj_is_kind_of(val, rb_cNumeric)) {
 	return Qnil;
     }
@@ -4618,6 +4612,7 @@ InitVM_Object(void)
     rb_define_method(rb_cModule, "attr_accessor", rb_mod_attr_accessor, -1);
 
     rb_define_alloc_func(rb_cModule, rb_module_s_alloc);
+    rb_undef_method(rb_singleton_class(rb_cModule), "allocate");
     rb_define_method(rb_cModule, "initialize", rb_mod_initialize, 0);
     rb_define_method(rb_cModule, "initialize_clone", rb_mod_initialize_clone, -1);
     rb_define_method(rb_cModule, "instance_methods", rb_class_instance_methods, -1); /* in class.c */
@@ -4649,6 +4644,7 @@ InitVM_Object(void)
     rb_define_method(rb_cModule, "deprecate_constant", rb_mod_deprecate_constant, -1); /* in variable.c */
     rb_define_method(rb_cModule, "singleton_class?", rb_mod_singleton_p, 0);
 
+    rb_define_method(rb_singleton_class(rb_cClass), "allocate", rb_class_alloc_m, 0);
     rb_define_method(rb_cClass, "allocate", rb_class_alloc_m, 0);
     rb_define_method(rb_cClass, "new", rb_class_new_instance_pass_kw, -1);
     rb_define_method(rb_cClass, "initialize", rb_class_initialize, -1);

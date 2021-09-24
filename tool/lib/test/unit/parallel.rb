@@ -15,7 +15,6 @@ module Test
         undef autorun
       end
 
-      alias orig_run_suite mini_run_suite
       undef _run_suite
       undef _run_suites
       undef run
@@ -34,10 +33,10 @@ module Test
 
       def _run_suite(suite, type) # :nodoc:
         @partial_report = []
-        orig_testout = MiniTest::Unit.output
+        orig_testout = Test::Unit::Runner.output
         i,o = IO.pipe
 
-        MiniTest::Unit.output = o
+        Test::Unit::Runner.output = o
         orig_stdin, orig_stdout = $stdin, $stdout
 
         th = Thread.new do
@@ -71,7 +70,7 @@ module Test
           result = [nil,nil]
         end
 
-        MiniTest::Unit.output = orig_testout
+        Test::Unit::Runner.output = orig_testout
         $stdin = orig_stdin
         $stdout = orig_stdout
 
@@ -92,7 +91,7 @@ module Test
         _report "done", Marshal.dump(result)
         return result
       ensure
-        MiniTest::Unit.output = orig_stdout
+        Test::Unit::Runner.output = orig_stdout
         $stdin = orig_stdin if orig_stdin
         $stdout = orig_stdout if orig_stdout
         o.close if o && !o.closed?
@@ -127,7 +126,7 @@ module Test
               _report "okay"
 
               @options = @opts.dup
-              suites = MiniTest::Unit::TestCase.test_suites
+              suites = Test::Unit::TestCase.test_suites
 
               begin
                 require File.realpath($1)
@@ -136,7 +135,7 @@ module Test
                 _report "ready"
                 next
               end
-              _run_suites MiniTest::Unit::TestCase.test_suites-suites, $2.to_sym
+              _run_suites Test::Unit::TestCase.test_suites-suites, $2.to_sym
 
               if @need_exit
                 _report "bye"
@@ -184,21 +183,21 @@ module Test
       end
 
       def puke(klass, meth, e) # :nodoc:
-        if e.is_a?(MiniTest::Skip)
-          new_e = MiniTest::Skip.new(e.message)
+        if e.is_a?(Test::Unit::PendedError)
+          new_e = Test::Unit::PendedError.new(e.message)
           new_e.set_backtrace(e.backtrace)
           e = new_e
         end
-        @partial_report << [klass.name, meth, e.is_a?(MiniTest::Assertion) ? e : ProxyError.new(e)]
+        @partial_report << [klass.name, meth, e.is_a?(Test::Unit::AssertionFailedError) ? e : ProxyError.new(e)]
         super
       end
 
       def record(suite, method, assertions, time, error) # :nodoc:
         case error
         when nil
-        when MiniTest::Assertion, MiniTest::Skip
+        when Test::Unit::AssertionFailedError, Test::Unit::PendedError
           case error.cause
-          when nil, MiniTest::Assertion, MiniTest::Skip
+          when nil, Test::Unit::AssertionFailedError, Test::Unit::PendedError
           else
             bt = error.backtrace
             error = error.class.new(error.message)
@@ -217,7 +216,7 @@ end
 if $0 == __FILE__
   module Test
     module Unit
-      class TestCase < MiniTest::Unit::TestCase # :nodoc: all
+      class TestCase # :nodoc: all
         undef on_parallel_worker?
         def on_parallel_worker?
           true

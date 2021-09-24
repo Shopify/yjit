@@ -27,9 +27,18 @@ module TestIRB
     end
 
     def test_complete_symbol
+      %w"UTF-16LE UTF-7".each do |enc|
+        "K".force_encoding(enc).to_sym
+      rescue
+      end
       _ = :aiueo
       assert_include(IRB::InputCompletor.retrieve_completion_data(":a", bind: binding), ":aiueo")
       assert_empty(IRB::InputCompletor.retrieve_completion_data(":irb_unknown_symbol_abcdefg", bind: binding))
+    end
+
+    def test_complete_invalid_three_colons
+      assert_empty(IRB::InputCompletor.retrieve_completion_data(":::A", bind: binding))
+      assert_empty(IRB::InputCompletor.retrieve_completion_data(":::", bind: binding))
     end
 
     def test_complete_symbol_failure
@@ -69,8 +78,9 @@ module TestIRB
     end
 
     def test_complete_require_library_name_first
+      pend 'Need to use virtual library paths'
       candidates = IRB::InputCompletor::CompletionProc.("'csv", "require ", "")
-      assert_equal candidates.first, "'csv"
+      assert_equal "'csv", candidates.first
     end
 
     def test_complete_require_relative

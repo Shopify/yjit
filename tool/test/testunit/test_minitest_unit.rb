@@ -10,7 +10,7 @@ class ImmutableString < String; def inspect; super.freeze; end; end
 
 class TestMiniTestUnit < MetaMetaMetaTestCase
   pwd = Pathname.new File.expand_path Dir.pwd
-  basedir = Pathname.new(File.expand_path "lib/minitest") + 'mini'
+  basedir = Pathname.new(File.expand_path "lib/test")
   basedir = basedir.relative_path_from(pwd).to_s
   MINITEST_BASE_DIR = basedir[/\A\./] ? basedir : "./#{basedir}"
   BT_MIDDLE = ["#{MINITEST_BASE_DIR}/test.rb:161:in `each'",
@@ -19,7 +19,7 @@ class TestMiniTestUnit < MetaMetaMetaTestCase
                "#{MINITEST_BASE_DIR}/test.rb:106:in `run'"]
 
   def test_class_puke_with_assertion_failed
-    exception = MiniTest::Assertion.new "Oh no!"
+    exception = Test::Unit::AssertionFailedError.new "Oh no!"
     exception.set_backtrace ["unhappy"]
     assert_equal 'F', @tu.puke('SomeClass', 'method_name', exception)
     assert_equal 1, @tu.failures
@@ -29,7 +29,7 @@ class TestMiniTestUnit < MetaMetaMetaTestCase
 
   def test_class_puke_with_assertion_failed_and_long_backtrace
     bt = (["test/test_some_class.rb:615:in `method_name'",
-           "#{MINITEST_BASE_DIR}/unit.rb:140:in `assert_raises'",
+           "#{MINITEST_BASE_DIR}/unit.rb:140:in `assert_raise'",
            "test/test_some_class.rb:615:in `each'",
            "test/test_some_class.rb:614:in `test_method_name'",
            "#{MINITEST_BASE_DIR}/test.rb:165:in `__send__'"] +
@@ -39,7 +39,7 @@ class TestMiniTestUnit < MetaMetaMetaTestCase
 
     ex_location = util_expand_bt(["test/test_some_class.rb:615"]).first
 
-    exception = MiniTest::Assertion.new "Oh no!"
+    exception = Test::Unit::AssertionFailedError.new "Oh no!"
     exception.set_backtrace bt
     assert_equal 'F', @tu.puke('TestSomeClass', 'test_method_name', exception)
     assert_equal 1, @tu.failures
@@ -49,7 +49,7 @@ class TestMiniTestUnit < MetaMetaMetaTestCase
 
   def test_class_puke_with_assertion_failed_and_user_defined_assertions
     bt = (["lib/test/my/util.rb:16:in `another_method_name'",
-           "#{MINITEST_BASE_DIR}/unit.rb:140:in `assert_raises'",
+           "#{MINITEST_BASE_DIR}/unit.rb:140:in `assert_raise'",
            "lib/test/my/util.rb:15:in `block in assert_something'",
            "lib/test/my/util.rb:14:in `each'",
            "lib/test/my/util.rb:14:in `assert_something'",
@@ -62,7 +62,7 @@ class TestMiniTestUnit < MetaMetaMetaTestCase
 
     ex_location = util_expand_bt(["test/test_some_class.rb:615"]).first
 
-    exception = MiniTest::Assertion.new "Oh no!"
+    exception = Test::Unit::AssertionFailedError.new "Oh no!"
     exception.set_backtrace bt
     assert_equal 'F', @tu.puke('TestSomeClass', 'test_method_name', exception)
     assert_equal 1, @tu.failures
@@ -72,8 +72,8 @@ class TestMiniTestUnit < MetaMetaMetaTestCase
 
   def test_class_puke_with_failure_and_flunk_in_backtrace
     exception = begin
-                  MiniTest::Unit::TestCase.new('fake tc').flunk
-                rescue MiniTest::Assertion => failure
+                  Test::Unit::TestCase.new('fake tc').flunk
+                rescue Test::Unit::AssertionFailedError => failure
                   failure
                 end
     assert_equal 'F', @tu.puke('SomeClass', 'method_name', exception)
@@ -82,7 +82,7 @@ class TestMiniTestUnit < MetaMetaMetaTestCase
 
   def test_class_puke_with_flunk_and_user_defined_assertions
     bt = (["lib/test/my/util.rb:16:in `flunk'",
-           "#{MINITEST_BASE_DIR}/unit.rb:140:in `assert_raises'",
+           "#{MINITEST_BASE_DIR}/unit.rb:140:in `assert_raise'",
            "lib/test/my/util.rb:15:in `block in assert_something'",
            "lib/test/my/util.rb:14:in `each'",
            "lib/test/my/util.rb:14:in `assert_something'",
@@ -95,7 +95,7 @@ class TestMiniTestUnit < MetaMetaMetaTestCase
 
     ex_location = util_expand_bt(["test/test_some_class.rb:615"]).first
 
-    exception = MiniTest::Assertion.new "Oh no!"
+    exception = Test::Unit::AssertionFailedError.new "Oh no!"
     exception.set_backtrace bt
     assert_equal 'F', @tu.puke('TestSomeClass', 'test_method_name', exception)
     assert_equal 1, @tu.failures
@@ -125,7 +125,7 @@ class TestMiniTestUnit < MetaMetaMetaTestCase
           "test/test_autotest.rb:62:in `test_add_exception'"]
     ex = util_expand_bt ex
 
-    fu = MiniTest::filter_backtrace(bt)
+    fu = Test::filter_backtrace(bt)
 
     assert_equal ex, fu
   end
@@ -135,7 +135,7 @@ class TestMiniTestUnit < MetaMetaMetaTestCase
           BT_MIDDLE +
           ["#{MINITEST_BASE_DIR}/test.rb:29"])
     ex = bt.clone
-    fu = MiniTest::filter_backtrace(bt)
+    fu = Test::filter_backtrace(bt)
     assert_equal ex, fu
   end
 
@@ -148,17 +148,17 @@ class TestMiniTestUnit < MetaMetaMetaTestCase
     bt = util_expand_bt bt
 
     ex = ["-e:1"]
-    fu = MiniTest::filter_backtrace bt
+    fu = Test::filter_backtrace bt
     assert_equal ex, fu
   end
 
   def test_default_runner_is_minitest_unit
-    assert_instance_of MiniTest::Unit, MiniTest::Unit.runner
+    assert_instance_of Test::Unit::Runner, Test::Unit::Runner.runner
   end
 
 
   def test_passed_eh_teardown_good
-    test_class = Class.new MiniTest::Unit::TestCase do
+    test_class = Class.new Test::Unit::TestCase do
       def teardown; assert true; end
       def test_omg; assert true; end
     end
@@ -169,7 +169,7 @@ class TestMiniTestUnit < MetaMetaMetaTestCase
   end
 
   def test_passed_eh_teardown_skipped
-    test_class = Class.new MiniTest::Unit::TestCase do
+    test_class = Class.new Test::Unit::TestCase do
       def teardown; assert true; end
       def test_omg; skip "bork"; end
     end
@@ -180,7 +180,7 @@ class TestMiniTestUnit < MetaMetaMetaTestCase
   end
 
   def test_passed_eh_teardown_flunked
-    test_class = Class.new MiniTest::Unit::TestCase do
+    test_class = Class.new Test::Unit::TestCase do
       def teardown; flunk;       end
       def test_omg; assert true; end
     end
@@ -223,7 +223,7 @@ class TestMiniTestUnitInherited < MetaMetaMetaTestCase
   def test_inherited_hook_plays_nice_with_others
     with_overridden_include do
       assert_throws :inherited_hook do
-        Class.new MiniTest::Unit::TestCase
+        Class.new Test::Unit::TestCase
       end
     end
   end
@@ -235,151 +235,23 @@ class TestMiniTestRunner < MetaMetaMetaTestCase
   def test_class_test_suites
     @assertion_count = 0
 
-    tc = Class.new(MiniTest::Unit::TestCase)
+    tc = Class.new(Test::Unit::TestCase)
 
-    assert_equal 1, MiniTest::Unit::TestCase.test_suites.size
-    assert_equal [tc], MiniTest::Unit::TestCase.test_suites
-  end
-
-  def test_run_test
-    Class.new MiniTest::Unit::TestCase do
-      attr_reader :foo
-
-      def run_test name
-        @foo = "hi mom!"
-        super
-        @foo = "okay"
-      end
-
-      def test_something
-        assert_equal "hi mom!", foo
-      end
-    end
-
-    expected = clean <<-EOM
-      .
-
-      Finished tests in 0.00
-
-      1 tests, 1 assertions, 0 failures, 0 errors, 0 skips
-    EOM
-
-    assert_report expected
-  end
-
-  def test_run_error
-    Class.new MiniTest::Unit::TestCase do
-      def test_something
-        assert true
-      end
-
-      def test_error
-        raise "unhandled exception"
-      end
-    end
-
-    expected = clean <<-EOM
-      E.
-
-      Finished tests in 0.00
-
-        1) Error:
-      #<Class:0xXXX>#test_error:
-      RuntimeError: unhandled exception
-          FILE:LINE:in \`test_error\'
-
-      2 tests, 1 assertions, 0 failures, 1 errors, 0 skips
-    EOM
-
-    assert_report expected
-  end
-
-  def test_run_error_teardown
-    Class.new MiniTest::Unit::TestCase do
-      def test_something
-        assert true
-      end
-
-      def teardown
-        raise "unhandled exception"
-      end
-    end
-
-    expected = clean <<-EOM
-      E
-
-      Finished tests in 0.00
-
-        1) Error:
-      #<Class:0xXXX>#test_something:
-      RuntimeError: unhandled exception
-          FILE:LINE:in \`teardown\'
-
-      1 tests, 1 assertions, 0 failures, 1 errors, 0 skips
-    EOM
-
-    assert_report expected
-  end
-
-  def test_run_failing
-    Class.new MiniTest::Unit::TestCase do
-      def test_something
-        assert true
-      end
-
-      def test_failure
-        assert false
-      end
-    end
-
-    expected = clean <<-EOM
-      F.
-
-      Finished tests in 0.00
-
-        1) Failure:
-      #<Class:0xXXX>#test_failure [FILE:LINE]:
-      Failed assertion, no message given.
-
-      2 tests, 2 assertions, 1 failures, 0 errors, 0 skips
-    EOM
-
-    assert_report expected
-  end
-
-  def test_run_failing_filtered
-    Class.new MiniTest::Unit::TestCase do
-      def test_something
-        assert true
-      end
-
-      def test_failure
-        assert false
-      end
-    end
-
-    expected = clean <<-EOM
-      .
-
-      Finished tests in 0.00
-
-      1 tests, 1 assertions, 0 failures, 0 errors, 0 skips
-    EOM
-
-    assert_report expected, %w[--name /some|thing/ --seed 42]
+    assert_equal 2, Test::Unit::TestCase.test_suites.size
+    assert_equal [tc, Test::Unit::TestCase], Test::Unit::TestCase.test_suites
   end
 
   def assert_filtering name, expected, a = false
     args = %W[--name #{name} --seed 42]
 
-    alpha = Class.new MiniTest::Unit::TestCase do
+    alpha = Class.new Test::Unit::TestCase do
       define_method :test_something do
         assert a
       end
     end
     Object.const_set(:Alpha, alpha)
 
-    beta = Class.new MiniTest::Unit::TestCase do
+    beta = Class.new Test::Unit::TestCase do
       define_method :test_something do
         assert true
       end
@@ -392,123 +264,20 @@ class TestMiniTestRunner < MetaMetaMetaTestCase
     Object.send :remove_const, :Beta
   end
 
-  def test_run_filtered_including_suite_name
-    expected = clean <<-EOM
-      .
-
-      Finished tests in 0.00
-
-      1 tests, 1 assertions, 0 failures, 0 errors, 0 skips
-    EOM
-
-    assert_filtering "/Beta#test_something/", expected
-  end
-
-  def test_run_filtered_including_suite_name_string
-    expected = clean <<-EOM
-      .
-
-      Finished tests in 0.00
-
-      1 tests, 1 assertions, 0 failures, 0 errors, 0 skips
-    EOM
-
-    assert_filtering "Beta#test_something", expected
-  end
-
-  def test_run_filtered_string_method_only
-    expected = clean <<-EOM
-      ..
-
-      Finished tests in 0.00
-
-      2 tests, 2 assertions, 0 failures, 0 errors, 0 skips
-    EOM
-
-    assert_filtering "test_something", expected, :pass
-  end
-
-  def test_run_passing
-    Class.new MiniTest::Unit::TestCase do
-      def test_something
-        assert true
-      end
-    end
-
-    expected = clean <<-EOM
-      .
-
-      Finished tests in 0.00
-
-      1 tests, 1 assertions, 0 failures, 0 errors, 0 skips
-    EOM
-
-    assert_report expected
-  end
-
-  def test_run_skip
-    Class.new MiniTest::Unit::TestCase do
-      def test_something
-        assert true
-      end
-
-      def test_skip
-        skip "not yet"
-      end
-    end
-
-    expected = clean <<-EOM
-      S.
-
-      Finished tests in 0.00
-
-      2 tests, 1 assertions, 0 failures, 0 errors, 1 skips
-    EOM
-
-    assert_report expected
-  end
-
-  def test_run_skip_verbose
-    Class.new MiniTest::Unit::TestCase do
-      def test_something
-        assert true
-      end
-
-      def test_skip
-        skip "not yet"
-      end
-    end
-
-    expected = clean <<-EOM
-      #<Class:0xXXX>#test_skip = 0.00 s = S
-      #<Class:0xXXX>#test_something = 0.00 s = .
-
-
-      Finished tests in 0.00
-
-        1) Skipped:
-      #<Class:0xXXX>#test_skip [FILE:LINE]:
-      not yet
-
-      2 tests, 1 assertions, 0 failures, 0 errors, 1 skips
-    EOM
-
-    assert_report expected, %w[--seed 42 --verbose]
-  end
-
   def test_run_with_other_runner
-    MiniTest::Unit.runner = Class.new MiniTest::Unit do
+    pend "We don't imagine to replace the default runner with ruby/ruby test suite."
+    Test::Unit::Runner.runner = Class.new Test::Unit::Runner do
       def _run_suite suite, type
         suite.before_suite # Run once before each suite
         super suite, type
       end
     end.new
 
-    Class.new MiniTest::Unit::TestCase do
+    Class.new Test::Unit::TestCase do
       def self.name; "wacky!" end
 
       def self.before_suite
-        MiniTest::Unit.output.puts "Running #{self.name} tests"
+        Test::Unit::Runner.output.puts "Running #{self.name} tests"
         @@foo = 1
       end
 
@@ -559,8 +328,10 @@ class TestMiniTestUnitOrder < MetaMetaMetaTestCase
   # do not parallelize this suite... it just can't handle it.
 
   def test_before_setup
+    pend "Surpressing the raise message when running with tests"
+
     call_order = []
-    Class.new MiniTest::Unit::TestCase do
+    Class.new Test::Unit::TestCase do
       define_method :setup do
         super()
         call_order << :setup
@@ -582,8 +353,10 @@ class TestMiniTestUnitOrder < MetaMetaMetaTestCase
   end
 
   def test_after_teardown
+    pend "Surpressing the result message of this tests"
+
     call_order = []
-    Class.new MiniTest::Unit::TestCase do
+    Class.new Test::Unit::TestCase do
       define_method :teardown do
         super()
         call_order << :teardown
@@ -605,8 +378,10 @@ class TestMiniTestUnitOrder < MetaMetaMetaTestCase
   end
 
   def test_all_teardowns_are_guaranteed_to_run
+    pend "Surpressing the raise message when running with tests"
+
     call_order = []
-    Class.new MiniTest::Unit::TestCase do
+    Class.new Test::Unit::TestCase do
       define_method :after_teardown do
         super()
         call_order << :after_teardown
@@ -637,9 +412,11 @@ class TestMiniTestUnitOrder < MetaMetaMetaTestCase
   end
 
   def test_setup_and_teardown_survive_inheritance
+    pend "Surpressing the result message of this tests"
+
     call_order = []
 
-    parent = Class.new MiniTest::Unit::TestCase do
+    parent = Class.new Test::Unit::TestCase do
       define_method :setup do
         call_order << :setup_method
       end
@@ -666,19 +443,17 @@ class TestMiniTestUnitOrder < MetaMetaMetaTestCase
   end
 end
 
-class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
+class TestMiniTestUnitTestCase < Test::Unit::TestCase
   # do not call parallelize_me! - teardown accesses @tc._assertions
   # which is not threadsafe. Nearly every method in here is an
   # assertion test so it isn't worth splitting it out further.
 
-  RUBY18 = ! defined? Encoding
-
   def setup
     super
 
-    MiniTest::Unit::TestCase.reset
+    Test::Unit::TestCase.reset
 
-    @tc = MiniTest::Unit::TestCase.new 'fake tc'
+    @tc = Test::Unit::TestCase.new 'fake tc'
     @zomg = "zomg ponies!"
     @assertion_count = 1
   end
@@ -736,9 +511,8 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
   def test_assert_equal_different_collection_array_hex_invisible
     object1 = Object.new
     object2 = Object.new
-    msg = "No visible difference in the Array#inspect output.
-           You should look at the implementation of #== on Array or its members.
-           [#<Object:0xXXXXXX>]".gsub(/^ +/, "")
+    msg = "<[#{object1.inspect}]> expected but was
+          <[#{object2.inspect}]>.".gsub(/^ +/, "")
     util_assert_triggered msg do
       @tc.assert_equal [object1], [object2]
     end
@@ -748,9 +522,8 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
     h1, h2 = {}, {}
     h1[1] = Object.new
     h2[1] = Object.new
-    msg = "No visible difference in the Hash#inspect output.
-           You should look at the implementation of #== on Hash or its members.
-           {1=>#<Object:0xXXXXXX>}".gsub(/^ +/, "")
+    msg = "<#{h1.inspect}> expected but was
+          <#{h2.inspect}>.".gsub(/^ +/, "")
 
     util_assert_triggered msg do
       @tc.assert_equal h1, h2
@@ -758,8 +531,6 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
   end
 
   def test_assert_equal_different_diff_deactivated
-    skip "https://github.com/MagLev/maglev/issues/209" if maglev?
-
     without_diff do
       util_assert_triggered util_msg("haha" * 10, "blah" * 10) do
         o1 = "haha" * 10
@@ -777,12 +548,8 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
 
     o1 = c.new "a"
     o2 = c.new "b"
-    msg = "--- expected
-           +++ actual
-           @@ -1 +1 @@
-           -#<#<Class:0xXXXXXX>:0xXXXXXX @name=\"a\">
-           +#<#<Class:0xXXXXXX>:0xXXXXXX @name=\"b\">
-           ".gsub(/^ +/, "")
+    msg = "<#{o1.inspect}> expected but was
+          <#{o2.inspect}>.".gsub(/^ +/, "")
 
     util_assert_triggered msg do
       @tc.assert_equal o1, o2
@@ -793,9 +560,8 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
     o1 = Object.new
     o2 = Object.new
 
-    msg = "No visible difference in the Object#inspect output.
-           You should look at the implementation of #== on Object or its members.
-           #<Object:0xXXXXXX>".gsub(/^ +/, "")
+    msg = "<#{o1.inspect}> expected but was
+          <#{o2.inspect}>.".gsub(/^ +/, "")
 
     util_assert_triggered msg do
       @tc.assert_equal o1, o2
@@ -803,12 +569,8 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
   end
 
   def test_assert_equal_different_long
-    msg = "--- expected
-           +++ actual
-           @@ -1 +1 @@
-           -\"hahahahahahahahahahahahahahahahahahahaha\"
-           +\"blahblahblahblahblahblahblahblahblahblah\"
-           ".gsub(/^ +/, "")
+    msg = "<\"hahahahahahahahahahahahahahahahahahahaha\"> expected but was
+           <\"blahblahblahblahblahblahblahblahblahblah\">.".gsub(/^ +/, "")
 
     util_assert_triggered msg do
       o1 = "haha" * 10
@@ -819,9 +581,8 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
   end
 
   def test_assert_equal_different_long_invisible
-    msg = "No visible difference in the String#inspect output.
-           You should look at the implementation of #== on String or its members.
-           \"blahblahblahblahblahblahblahblahblahblah\"".gsub(/^ +/, "")
+    msg = "<\"blahblahblahblahblahblahblahblahblahblah\"> (UTF-8) expected but was
+           <\"blahblahblahblahblahblahblahblahblahblah\"> (UTF-8).".gsub(/^ +/, "")
 
     util_assert_triggered msg do
       o1 = "blah" * 10
@@ -835,12 +596,8 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
 
   def test_assert_equal_different_long_msg
     msg = "message.
-           --- expected
-           +++ actual
-           @@ -1 +1 @@
-           -\"hahahahahahahahahahahahahahahahahahahaha\"
-           +\"blahblahblahblahblahblahblahblahblahblah\"
-           ".gsub(/^ +/, "")
+           <\"hahahahahahahahahahahahahahahahahahahaha\"> expected but was
+           <\"blahblahblahblahblahblahblahblahblahblah\">.".gsub(/^ +/, "")
 
     util_assert_triggered msg do
       o1 = "haha" * 10
@@ -862,14 +619,14 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
   end
 
   def test_assert_equal_different_short_multiline
-    msg = "--- expected\n+++ actual\n@@ -1,2 +1,2 @@\n \"a\n-b\"\n+c\"\n"
+    msg = "<\"a\\n\" + \"b\"> expected but was\n<\"a\\n\" + \"c\">."
     util_assert_triggered msg do
       @tc.assert_equal "a\nb", "a\nc"
     end
   end
 
   def test_assert_equal_different_escaped_newline
-    msg = "--- expected\n+++ actual\n@@ -1,2 +1,2 @@\n \"xxx\n-a\\\\nb\"\n+a\\\\nc\"\n"
+    msg = "<\"xxx\\n\" + \"a\\\\nb\"> expected but was\n<\"xxx\\n\" + \"a\\\\nc\">."
     util_assert_triggered msg do
       @tc.assert_equal "xxx\na\\nb", "xxx\na\\nc"
     end
@@ -888,7 +645,7 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
   end
 
   def test_assert_in_delta_triggered
-    x = maglev? ? "9.999999xxxe-07" : "1.0e-06"
+    x = "1.0e-06"
     util_assert_triggered "Expected |0.0 - 0.001| (0.001) to be <= #{x}." do
       @tc.assert_in_delta 0.0, 1.0 / 1000, 0.000001
     end
@@ -927,8 +684,8 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
   end
 
   def test_assert_in_epsilon_triggered_negative_case
-    x = (RUBY18 and not maglev?) ? "0.1" : "0.100000xxx"
-    y = maglev? ? "0.100000xxx" : "0.1"
+    x = "0.100000xxx"
+    y = "0.1"
     util_assert_triggered "Expected |-1.1 - -1| (#{x}) to be <= #{y}." do
       @tc.assert_in_epsilon(-1.1, -1, 0.1)
     end
@@ -943,7 +700,7 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
   def test_assert_includes_triggered
     @assertion_count = 3
 
-    e = @tc.assert_raises MiniTest::Assertion do
+    e = @tc.assert_raise Test::Unit::AssertionFailedError do
       @tc.assert_includes [true], false
     end
 
@@ -1113,14 +870,14 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
     end
   end
 
-  def test_assert_raises
-    @tc.assert_raises RuntimeError do
+  def test_assert_raise
+    @tc.assert_raise RuntimeError do
       raise "blah"
     end
   end
 
-  def test_assert_raises_module
-    @tc.assert_raises MyModule do
+  def test_assert_raise_module
+    @tc.assert_raise MyModule do
       raise AnError
     end
   end
@@ -1131,11 +888,11 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
   #
   # https://github.com/ruby/ruby/commit/6bab4ea9917dc05cd2c94aead2e96eb7df7d4be1
 
-  def test_assert_raises_skip
+  def test_assert_raise_skip
     @assertion_count = 0
 
-    util_assert_triggered "skipped", MiniTest::Skip do
-      @tc.assert_raises ArgumentError do
+    util_assert_triggered "skipped", Test::Unit::PendedError do
+      @tc.assert_raise ArgumentError do
         begin
           raise "blah"
         rescue
@@ -1145,20 +902,15 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
     end
   end
 
-  def test_assert_raises_triggered_different
-    e = assert_raises MiniTest::Assertion do
-      @tc.assert_raises RuntimeError do
+  def test_assert_raise_triggered_different
+    e = assert_raise Test::Unit::AssertionFailedError do
+      @tc.assert_raise RuntimeError do
         raise SyntaxError, "icky"
       end
     end
 
     expected = clean <<-EOM.chomp
-      [RuntimeError] exception expected, not
-      Class: <SyntaxError>
-      Message: <\"icky\">
-      ---Backtrace---
-      FILE:LINE:in \`test_assert_raises_triggered_different\'
-      ---------------
+      [RuntimeError] exception expected, not #<SyntaxError: icky>.
     EOM
 
     actual = e.message.gsub(/^.+:\d+/, 'FILE:LINE')
@@ -1167,21 +919,16 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
     assert_equal expected, actual
   end
 
-  def test_assert_raises_triggered_different_msg
-    e = assert_raises MiniTest::Assertion do
-      @tc.assert_raises RuntimeError, "XXX" do
+  def test_assert_raise_triggered_different_msg
+    e = assert_raise Test::Unit::AssertionFailedError do
+      @tc.assert_raise RuntimeError, "XXX" do
         raise SyntaxError, "icky"
       end
     end
 
     expected = clean <<-EOM
       XXX.
-      [RuntimeError] exception expected, not
-      Class: <SyntaxError>
-      Message: <\"icky\">
-      ---Backtrace---
-      FILE:LINE:in \`test_assert_raises_triggered_different_msg\'
-      ---------------
+      [RuntimeError] exception expected, not #<SyntaxError: icky>.
     EOM
 
     actual = e.message.gsub(/^.+:\d+/, 'FILE:LINE')
@@ -1190,44 +937,39 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
     assert_equal expected.chomp, actual
   end
 
-  def test_assert_raises_triggered_none
-    e = assert_raises MiniTest::Assertion do
-      @tc.assert_raises MiniTest::Assertion do
+  def test_assert_raise_triggered_none
+    e = assert_raise Test::Unit::AssertionFailedError do
+      @tc.assert_raise Test::Unit::AssertionFailedError do
         # do nothing
       end
     end
 
-    expected = "MiniTest::Assertion expected but nothing was raised."
+    expected = "Test::Unit::AssertionFailedError expected but nothing was raised."
 
     assert_equal expected, e.message
   end
 
-  def test_assert_raises_triggered_none_msg
-    e = assert_raises MiniTest::Assertion do
-      @tc.assert_raises MiniTest::Assertion, "XXX" do
+  def test_assert_raise_triggered_none_msg
+    e = assert_raise Test::Unit::AssertionFailedError do
+      @tc.assert_raise Test::Unit::AssertionFailedError, "XXX" do
         # do nothing
       end
     end
 
-    expected = "XXX.\nMiniTest::Assertion expected but nothing was raised."
+    expected = "XXX.\nTest::Unit::AssertionFailedError expected but nothing was raised."
 
     assert_equal expected, e.message
   end
 
-  def test_assert_raises_triggered_subclass
-    e = assert_raises MiniTest::Assertion do
-      @tc.assert_raises StandardError do
+  def test_assert_raise_triggered_subclass
+    e = assert_raise Test::Unit::AssertionFailedError do
+      @tc.assert_raise StandardError do
         raise AnError
       end
     end
 
     expected = clean <<-EOM.chomp
-      [StandardError] exception expected, not
-      Class: <AnError>
-      Message: <\"AnError\">
-      ---Backtrace---
-      FILE:LINE:in \`test_assert_raises_triggered_subclass\'
-      ---------------
+      [StandardError] exception expected, not #<AnError: AnError>.
     EOM
 
     actual = e.message.gsub(/^.+:\d+/, 'FILE:LINE')
@@ -1275,7 +1017,7 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
   end
 
   def test_assert_send_bad
-    util_assert_triggered "Expected 1.>(*[2]) to return true." do
+    util_assert_triggered "Expected 1.>(2) to return true." do
       @tc.assert_send [1, :>, 2]
     end
   end
@@ -1328,11 +1070,11 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
     end
   end
 
-  def test_capture_io
+  def test_capture_output
     @assertion_count = 0
 
     non_verbose do
-      out, err = capture_io do
+      out, err = capture_output do
         puts 'hi'
         $stderr.puts 'bye!'
       end
@@ -1340,46 +1082,6 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
       assert_equal "hi\n", out
       assert_equal "bye!\n", err
     end
-  end
-
-  def test_capture_subprocess_io
-    @assertion_count = 0
-
-    non_verbose do
-      out, err = capture_subprocess_io do
-        system("echo", "hi")
-        system("echo", "bye!", out: :err)
-      end
-
-      assert_equal "hi\n", out
-      assert_equal "bye!\n", err
-    end
-  end
-
-  def test_class_asserts_match_refutes
-    @assertion_count = 0
-
-    methods = MiniTest::Assertions.public_instance_methods
-    methods.map! { |m| m.to_s } if Symbol === methods.first
-
-    # These don't have corresponding refutes _on purpose_. They're
-    # useless and will never be added, so don't bother.
-    ignores = %w[assert_output assert_raises assert_send
-                 assert_silent assert_throws]
-
-    # These are test/unit methods. I'm not actually sure why they're still here
-    ignores += %w[assert_no_match assert_not_equal assert_not_nil
-                  assert_not_same assert_nothing_raised
-                  assert_nothing_thrown assert_raise]
-
-    # These are compatibility methods for Minitest 5
-    ignores += %w[assertions assertions=]
-
-    asserts = methods.grep(/^assert/).sort - ignores
-    refutes = methods.grep(/^refute/).sort - ignores
-
-    assert_empty refutes.map { |n| n.sub(/^refute/, 'assert') } - asserts
-    assert_empty asserts.map { |n| n.sub(/^assert/, 'refute') } - refutes
   end
 
   def test_flunk
@@ -1410,13 +1112,13 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
   end
 
   def test_message_message
-    util_assert_triggered "whoops.\nExpected: 1\n  Actual: 2" do
+    util_assert_triggered "whoops.\n<1> expected but was\n<2>." do
       @tc.assert_equal 1, 2, message { "whoops" }
     end
   end
 
   def test_message_lambda
-    util_assert_triggered "whoops.\nExpected: 1\n  Actual: 2" do
+    util_assert_triggered "whoops.\n<1> expected but was\n<2>." do
       @tc.assert_equal 1, 2, lambda { "whoops" }
     end
   end
@@ -1438,7 +1140,7 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
   end
 
   def test_prints
-    printer = Class.new { extend MiniTest::Assertions }
+    printer = Class.new { extend Test::Unit::CoreAssertions }
     @tc.assert_equal '"test"', printer.mu_pp(ImmutableString.new 'test')
   end
 
@@ -1477,7 +1179,7 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
   end
 
   def test_refute_in_delta_triggered
-    x = maglev? ? "0.100000xxx" : "0.1"
+    x = "0.1"
     util_assert_triggered "Expected |0.0 - 0.001| (0.001) to not be <= #{x}." do
       @tc.refute_in_delta 0.0, 1.0 / 1000, 0.1
     end
@@ -1503,7 +1205,7 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
   def test_refute_includes_triggered
     @assertion_count = 3
 
-    e = @tc.assert_raises MiniTest::Assertion do
+    e = @tc.assert_raise Test::Unit::AssertionFailedError do
       @tc.refute_includes [true], true
     end
 
@@ -1624,7 +1326,7 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
   def test_skip
     @assertion_count = 0
 
-    util_assert_triggered "haha!", MiniTest::Skip do
+    util_assert_triggered "haha!", Test::Unit::PendedError do
       @tc.skip "haha!"
     end
   end
@@ -1632,7 +1334,7 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
   def test_test_methods_random
     @assertion_count = 0
 
-    sample_test_case = Class.new MiniTest::Unit::TestCase do
+    sample_test_case = Class.new Test::Unit::TestCase do
       def self.test_order; :random; end
       def test_test1; assert "does not matter" end
       def test_test2; assert "does not matter" end
@@ -1648,7 +1350,7 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
   def test_test_methods_sorted
     @assertion_count = 0
 
-    sample_test_case = Class.new MiniTest::Unit::TestCase do
+    sample_test_case = Class.new Test::Unit::TestCase do
       def self.test_order; :sorted end
       def test_test3; assert "does not matter" end
       def test_test2; assert "does not matter" end
@@ -1659,8 +1361,8 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
     assert_equal expected, sample_test_case.test_methods
   end
 
-  def assert_triggered expected, klass = MiniTest::Assertion
-    e = assert_raises klass do
+  def assert_triggered expected, klass = Test::Unit::AssertionFailedError
+    e = assert_raise klass do
       yield
     end
 
@@ -1673,22 +1375,22 @@ class TestMiniTestUnitTestCase < MiniTest::Unit::TestCase
   alias util_assert_triggered assert_triggered
 
   def util_msg exp, act, msg = nil
-    s = "Expected: #{exp.inspect}\n  Actual: #{act.inspect}"
+    s = "<#{exp.inspect}> expected but was\n<#{act.inspect}>."
     s = "#{msg}.\n#{s}" if msg
     s
   end
 
   def without_diff
-    old_diff = MiniTest::Assertions.diff
-    MiniTest::Assertions.diff = nil
+    old_diff = Test::Unit::Assertions.diff
+    Test::Unit::Assertions.diff = nil
 
     yield
   ensure
-    MiniTest::Assertions.diff = old_diff
+    Test::Unit::Assertions.diff = old_diff
   end
 end
 
-class TestMiniTestGuard < MiniTest::Unit::TestCase
+class TestMiniTestGuard < Test::Unit::TestCase
   def test_mri_eh
     assert self.class.mri? "ruby blah"
     assert self.mri? "ruby blah"
@@ -1697,11 +1399,6 @@ class TestMiniTestGuard < MiniTest::Unit::TestCase
   def test_jruby_eh
     assert self.class.jruby? "java"
     assert self.jruby? "java"
-  end
-
-  def test_rubinius_eh
-    assert self.class.rubinius? "rbx"
-    assert self.rubinius? "rbx"
   end
 
   def test_windows_eh
@@ -1714,6 +1411,7 @@ class TestMiniTestUnitRecording < MetaMetaMetaTestCase
   # do not parallelize this suite... it just can't handle it.
 
   def assert_run_record(*expected, &block)
+    pend "Test::Unit::Runner#run was changed about recoding feature. We should fix it."
     def @tu.record suite, method, assertions, time, error
       recording[method] << error
     end
@@ -1722,9 +1420,9 @@ class TestMiniTestUnitRecording < MetaMetaMetaTestCase
       @recording ||= Hash.new { |h,k| h[k] = [] }
     end
 
-    MiniTest::Unit.runner = @tu
+    Test::Unit::Runner.runner = @tu
 
-    Class.new MiniTest::Unit::TestCase, &block
+    Class.new Test::Unit::TestCase, &block
 
     with_output do
       @tu.run
@@ -1744,7 +1442,7 @@ class TestMiniTestUnitRecording < MetaMetaMetaTestCase
   end
 
   def test_record_failing
-    assert_run_record MiniTest::Assertion do
+    assert_run_record Test::Unit::AssertionFailedError do
       def test_method
         assert false
       end
@@ -1784,7 +1482,7 @@ class TestMiniTestUnitRecording < MetaMetaMetaTestCase
   end
 
   def test_record_skip
-    assert_run_record MiniTest::Skip do
+    assert_run_record Test::Unit::PendedError do
       def test_method
         skip "not yet"
       end

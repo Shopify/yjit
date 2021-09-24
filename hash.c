@@ -132,7 +132,7 @@ rb_hash(VALUE obj)
     }
 
     while (!FIXNUM_P(hval)) {
-        if (RB_TYPE_P(hval, T_BIGNUM)) {
+        if (RB_BIGNUM_TYPE_P(hval)) {
             int sign;
             unsigned long ul;
             sign = rb_integer_pack(hval, &ul, 1, sizeof(ul), 0,
@@ -3290,7 +3290,6 @@ rb_hash_transform_keys_bang(int argc, VALUE *argv, VALUE hash)
         }
         rb_ary_clear(pairs);
         rb_hash_clear(new_keys);
-        rb_gc_force_recycle(new_keys);
     }
     return hash;
 }
@@ -4535,7 +4534,7 @@ rb_hash_any_p(int argc, VALUE *argv, VALUE hash)
  *  Finds and returns the object in nested objects
  *  that is specified by +key+ and +identifiers+.
  *  The nested objects may be instances of various classes.
- *  See {Dig Methods}[rdoc-ref:doc/dig_methods.rdoc].
+ *  See {Dig Methods}[rdoc-ref:dig_methods.rdoc].
  *
  *  Nested Hashes:
  *    h = {foo: {bar: {baz: 2}}}
@@ -6181,6 +6180,18 @@ env_to_hash(void)
     }
     FREE_ENVIRON(environ);
     return hash;
+}
+
+VALUE
+rb_envtbl(void)
+{
+    return envtbl;
+}
+
+VALUE
+rb_env_to_hash(void)
+{
+    return env_to_hash();
 }
 
 /*

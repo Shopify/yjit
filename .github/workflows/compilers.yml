@@ -181,7 +181,7 @@ jobs:
       - name: setenv
         run: |
           echo "${{ matrix.entry.key }}=${{ matrix.entry.value }}" >> $GITHUB_ENV
-          echo "make=make -sj$((1 + $(nproc --all)))" >> $GITHUB_ENV
+          echo "GNUMAKEFLAGS=-sj$((1 + $(nproc --all)))" >> $GITHUB_ENV
       - uses: actions/checkout@v2
         with:
           path: src
@@ -201,11 +201,11 @@ jobs:
         if: ${{ matrix.entry.check }}
       - run: /usr/local/bin/gem install --no-doc timezone tzinfo
         if: ${{ matrix.entry.check }}
-      - run: $make test-tool
+      - run: make test-tool
         if: ${{ matrix.entry.check }}
-      - run: $make test-all TESTS='-- ruby -ext-'
+      - run: make test-all TESTS='-- ruby -ext-'
         if: ${{ matrix.entry.check }}
-      - run: $make test-spec
+      - run: make test-spec
         if: ${{ matrix.entry.check }}
 
       - uses: k0kubun/action-slack@v2.0.0
