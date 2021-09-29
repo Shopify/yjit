@@ -3086,6 +3086,11 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
         return YJIT_CANT_COMPILE;
     }
 
+    if (vm_ci_flag(ci) & VM_CALL_ARGS_BLOCKARG) {
+        // TODO: increment counter
+        return YJIT_CANT_COMPILE;
+    }
+
     // Don't JIT if tracing c_call or c_return
     {
         rb_event_flag_t tracing_events;
@@ -3395,11 +3400,29 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
         return YJIT_CANT_COMPILE;
     }
 
-    // Number of locals that are not parameters
-    const int num_locals = iseq->body->local_table_size - num_params;
-
     // Create a size-exit to fall back to the interpreter
     uint8_t *side_exit = yjit_side_exit(jit, ctx);
+
+    int argb = 0;
+    if (vm_ci_flag(ci) & VM_CALL_ARGS_BLOCKARG) {
+        RUBY_ASSERT(!block);
+
+        // Only compile if our ec is local
+	    if(!VM_ENV_LOCAL_P(jit->ec->cfp->ep)) {
+            return YJIT_CANT_COMPILE;
+        }
+
+        argb = 1;
+
+        if (ctx_get_opnd_type(ctx, OPND_STACK(0)).type == ETYPE_BLOCK_PARAM_PROXY) {
+            block = rb_block_param_proxy;
+        } else {
+            RUBY_ASSERT(false);
+        }
+    }
+
+    // Number of locals that are not parameters
+    const int num_locals = iseq->body->local_table_size - num_params;
 
     // Check for interrupts
     yjit_check_ints(cb, side_exit);
@@ -3431,6 +3454,9 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
         return YJIT_KEEP_COMPILING;
     }
 
+    // pop BLOCKARG if exists
+    ctx_stack_pop(ctx, argb);
+
     // Stack overflow check
     // Note that vm_push_frame checks it against a decremented cfp, hence the multiply by 2.
     // #define CHECK_VM_STACK_OVERFLOW0(cfp, sp, margin)
@@ -3449,7 +3475,11 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
     // Store the next PC in the current frame
     jit_save_pc(jit, REG0);
 
-    if (block) {
+    if (block == rb_block_param_proxy) {
+        mov(cb, REG0, member_opnd(REG_CFP, rb_control_frame_t, ep));
+        mov(cb, REG0, mem_opnd(64, REG0, SIZEOF_VALUE * VM_ENV_DATA_INDEX_SPECVAL));
+        mov(cb, member_opnd(REG_CFP, rb_control_frame_t, block_code), REG0);
+    } else if (block) {
         // Change cfp->block_code in the current frame. See vm_caller_setup_arg_block().
         // VM_CFP_TO_CAPTURED_BLCOK does &cfp->self, rb_captured_block->code.iseq aliases
         // with cfp->block_code.
@@ -3474,7 +3504,10 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
 
     // Write block handler at sp[-2]
     // sp[-2] = block_handler;
-    if (block) {
+    if (block == rb_block_param_proxy) {
+        mov(cb, REG1, member_opnd(REG_CFP, rb_control_frame_t, block_code));
+        mov(cb, mem_opnd(64, REG0, 8 * -2), REG1);
+    } else if (block) {
         // reg1 = VM_BH_FROM_ISEQ_BLOCK(VM_CFP_TO_CAPTURED_BLOCK(reg_cfp));
         lea(cb, REG1, member_opnd(REG_CFP, rb_control_frame_t, self));
         or(cb, REG1, imm_opnd(1));
@@ -3606,9 +3639,20 @@ gen_send_general(jitstate_t *jit, ctx_t *ctx, struct rb_call_data *cd, rb_iseq_t
         GEN_COUNTER_INC(cb, send_keywords);
         return YJIT_CANT_COMPILE;
     }
-    if ((vm_ci_flag(ci) & VM_CALL_ARGS_BLOCKARG) != 0) {
-        GEN_COUNTER_INC(cb, send_block_arg);
-        return YJIT_CANT_COMPILE;
+
+    int argb = 0;
+    if (vm_ci_flag(ci) & VM_CALL_ARGS_BLOCKARG != 0) {
+        if (ctx_get_opnd_type(ctx, OPND_STACK(0)).type == ETYPE_BLOCK_PARAM_PROXY) {
+            argb = 1;
+            jit_print_loc(jit, "rb_block_param_proxy");
+            //return YJIT_CANT_COMPILE;
+            ////fprintf(stderr, "argc: %i\n", argc);
+            //block = rb_block_param_proxy;
+            //ctx_stack_pop(ctx, 1);
+        } else {
+            // TODO: increment counter
+            return YJIT_CANT_COMPILE;
+        }
     }
 
     // Defer compilation so we can specialize on class of receiver
@@ -3617,15 +3661,16 @@ gen_send_general(jitstate_t *jit, ctx_t *ctx, struct rb_call_data *cd, rb_iseq_t
         return YJIT_END_BLOCK;
     }
 
-    VALUE comptime_recv = jit_peek_at_stack(jit, ctx, argc);
+    int recv_idx = argc + argb;
+    VALUE comptime_recv = jit_peek_at_stack(jit, ctx, recv_idx);
     VALUE comptime_recv_klass = CLASS_OF(comptime_recv);
 
     // Guard that the receiver has the same class as the one from compile time
     uint8_t *side_exit = yjit_side_exit(jit, ctx);
 
     // Points to the receiver operand on the stack
-    x86opnd_t recv = ctx_stack_opnd(ctx, argc);
-    insn_opnd_t recv_opnd = OPND_STACK(argc);
+    x86opnd_t recv = ctx_stack_opnd(ctx, recv_idx);
+    insn_opnd_t recv_opnd = OPND_STACK(recv_idx);
     mov(cb, REG0, recv);
     if (!jit_guard_known_klass(jit, ctx, comptime_recv_klass, recv_opnd, comptime_recv, SEND_MAX_DEPTH, side_exit)) {
         return YJIT_CANT_COMPILE;
@@ -3670,7 +3715,7 @@ gen_send_general(jitstate_t *jit, ctx_t *ctx, struct rb_call_data *cd, rb_iseq_t
         case VM_METHOD_TYPE_CFUNC:
             return gen_send_cfunc(jit, ctx, ci, cme, block, argc, &comptime_recv_klass);
         case VM_METHOD_TYPE_IVAR:
-            if (argc != 0) {
+            if (argc + argb != 0) {
                 // Argument count mismatch. Getters take no arguments.
                 GEN_COUNTER_INC(cb, send_getter_arity);
                 return YJIT_CANT_COMPILE;
@@ -3682,7 +3727,7 @@ gen_send_general(jitstate_t *jit, ctx_t *ctx, struct rb_call_data *cd, rb_iseq_t
                 return gen_get_ivar(jit, ctx, SEND_MAX_DEPTH, comptime_recv, ivar_name, recv_opnd, side_exit);
             }
         case VM_METHOD_TYPE_ATTRSET:
-            if (argc != 1 || !RB_TYPE_P(comptime_recv, T_OBJECT)) {
+            if (argc + argb != 1 || !RB_TYPE_P(comptime_recv, T_OBJECT)) {
                 GEN_COUNTER_INC(cb, send_ivar_set_method);
                 return YJIT_CANT_COMPILE;
             } else {
