@@ -3086,11 +3086,6 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
         return YJIT_CANT_COMPILE;
     }
 
-    if (vm_ci_flag(ci) & VM_CALL_ARGS_BLOCKARG) {
-        // TODO: increment counter
-        return YJIT_CANT_COMPILE;
-    }
-
     // Don't JIT if tracing c_call or c_return
     {
         rb_event_flag_t tracing_events;
@@ -3123,6 +3118,26 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
         }
     }
 
+    // Create a size-exit to fall back to the interpreter
+    uint8_t *side_exit = yjit_side_exit(jit, ctx);
+
+    if (vm_ci_flag(ci) & VM_CALL_ARGS_BLOCKARG) {
+        RUBY_ASSERT(!block);
+
+        // Only compile if our ec is local
+	    if(!VM_ENV_LOCAL_P(jit->ec->cfp->ep)) {
+            return YJIT_CANT_COMPILE;
+        }
+
+        if (ctx_get_opnd_type(ctx, OPND_STACK(0)).type == ETYPE_BLOCK_PARAM_PROXY) {
+            block = rb_block_param_proxy;
+            ctx_stack_pop(ctx, 1);
+
+        } else {
+            RUBY_ASSERT(false);
+        }
+    }
+
     // Callee method ID
     //ID mid = vm_ci_mid(ci);
     //printf("JITting call to C function \"%s\", argc: %lu\n", rb_id2name(mid), argc);
@@ -3131,9 +3146,6 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
     //print_str(cb, rb_id2name(mid));
     //print_str(cb, "recv");
     //print_ptr(cb, recv);
-
-    // Create a size-exit to fall back to the interpreter
-    uint8_t *side_exit = yjit_side_exit(jit, ctx);
 
     // Check for interrupts
     yjit_check_ints(cb, side_exit);
@@ -3151,7 +3163,11 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
     // Store incremented PC into current control frame in case callee raises.
     jit_save_pc(jit, REG0);
 
-    if (block) {
+    if (block == rb_block_param_proxy) {
+        mov(cb, REG0, member_opnd(REG_CFP, rb_control_frame_t, ep));
+        mov(cb, REG0, mem_opnd(64, REG0, SIZEOF_VALUE * VM_ENV_DATA_INDEX_SPECVAL));
+        mov(cb, member_opnd(REG_CFP, rb_control_frame_t, block_code), REG0);
+    } else if (block) {
         // Change cfp->block_code in the current frame. See vm_caller_setup_arg_block().
         // VM_CFP_TO_CAPTURED_BLCOK does &cfp->self, rb_captured_block->code.iseq aliases
         // with cfp->block_code.
@@ -3172,7 +3188,10 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
 
     // Write block handler at sp[-2]
     // sp[-2] = block_handler;
-    if (block) {
+    if (block == rb_block_param_proxy) {
+        mov(cb, REG1, member_opnd(REG_CFP, rb_control_frame_t, block_code));
+        mov(cb, mem_opnd(64, REG0, 8 * -2), REG1);
+    } else if (block) {
         // reg1 = VM_BH_FROM_ISEQ_BLOCK(VM_CFP_TO_CAPTURED_BLOCK(reg_cfp));
         lea(cb, REG1, member_opnd(REG_CFP, rb_control_frame_t, self));
         or(cb, REG1, imm_opnd(1));
@@ -3642,13 +3661,8 @@ gen_send_general(jitstate_t *jit, ctx_t *ctx, struct rb_call_data *cd, rb_iseq_t
 
     int argb = 0;
     if (vm_ci_flag(ci) & VM_CALL_ARGS_BLOCKARG != 0) {
+        argb = 1;
         if (ctx_get_opnd_type(ctx, OPND_STACK(0)).type == ETYPE_BLOCK_PARAM_PROXY) {
-            argb = 1;
-            jit_print_loc(jit, "rb_block_param_proxy");
-            //return YJIT_CANT_COMPILE;
-            ////fprintf(stderr, "argc: %i\n", argc);
-            //block = rb_block_param_proxy;
-            //ctx_stack_pop(ctx, 1);
         } else {
             // TODO: increment counter
             return YJIT_CANT_COMPILE;
