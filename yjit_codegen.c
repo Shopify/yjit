@@ -3665,7 +3665,7 @@ gen_send_general(jitstate_t *jit, ctx_t *ctx, struct rb_call_data *cd, rb_iseq_t
     }
 
     int argb = 0;
-    if (vm_ci_flag(ci) & VM_CALL_ARGS_BLOCKARG != 0) {
+    if ((vm_ci_flag(ci) & VM_CALL_ARGS_BLOCKARG) != 0) {
         argb = 1;
         if (ctx_get_opnd_type(ctx, OPND_STACK(0)).type == ETYPE_BLOCK_PARAM_PROXY) {
         } else {
