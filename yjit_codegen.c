@@ -3136,11 +3136,12 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
     // Create a size-exit to fall back to the interpreter
     uint8_t *side_exit = yjit_side_exit(jit, ctx);
 
+    VALUE block_handler = VM_BLOCK_HANDLER_NONE;
     if (vm_ci_flag(ci) & VM_CALL_ARGS_BLOCKARG) {
         RUBY_ASSERT(!block);
 
         if (ctx_get_opnd_type(ctx, OPND_STACK(0)).type == ETYPE_BLOCK_PARAM_PROXY) {
-            block = rb_block_param_proxy;
+            block_handler = rb_block_param_proxy;
             ctx_stack_pop(ctx, 1);
 
         } else {
@@ -3173,7 +3174,7 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
     // Store incremented PC into current control frame in case callee raises.
     jit_save_pc(jit, REG0);
 
-    if (block == rb_block_param_proxy) {
+    if (block_handler == rb_block_param_proxy) {
         gen_get_ep(cb, REG0, get_lvar_level(jit));
         mov(cb, REG0, mem_opnd(64, REG0, SIZEOF_VALUE * VM_ENV_DATA_INDEX_SPECVAL));
         mov(cb, member_opnd(REG_CFP, rb_control_frame_t, block_code), REG0);
@@ -3198,7 +3199,7 @@ gen_send_cfunc(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const 
 
     // Write block handler at sp[-2]
     // sp[-2] = block_handler;
-    if (block == rb_block_param_proxy) {
+    if (block_handler == rb_block_param_proxy) {
         mov(cb, REG1, member_opnd(REG_CFP, rb_control_frame_t, block_code));
         mov(cb, mem_opnd(64, REG0, 8 * -2), REG1);
     } else if (block) {
@@ -3432,28 +3433,26 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
     // Create a size-exit to fall back to the interpreter
     uint8_t *side_exit = yjit_side_exit(jit, ctx);
 
-    int argb = 0;
+    // Check for interrupts
+    yjit_check_ints(cb, side_exit);
+
+
+    VALUE block_handler = VM_BLOCK_HANDLER_NONE;
     if (vm_ci_flag(ci) & VM_CALL_ARGS_BLOCKARG) {
         RUBY_ASSERT(!block);
 
-        argb = 1;
+        RUBY_ASSERT(ctx_get_opnd_type(ctx, OPND_STACK(0)).type == ETYPE_BLOCK_PARAM_PROXY);
 
-        if (ctx_get_opnd_type(ctx, OPND_STACK(0)).type == ETYPE_BLOCK_PARAM_PROXY) {
-            block = rb_block_param_proxy;
-        } else {
-            RUBY_ASSERT(false);
-        }
+        block_handler = rb_block_param_proxy;
+        ctx_stack_pop(ctx, 1);
     }
 
     // Number of locals that are not parameters
     const int num_locals = iseq->body->local_table_size - num_params;
 
-    // Check for interrupts
-    yjit_check_ints(cb, side_exit);
-
     const struct rb_builtin_function *leaf_builtin = rb_leaf_builtin_function(iseq);
 
-    if (leaf_builtin && !block && leaf_builtin->argc + 1 <= NUM_C_ARG_REGS) {
+    if (leaf_builtin && !block && !block_handler && leaf_builtin->argc + 1 <= NUM_C_ARG_REGS) {
         ADD_COMMENT(cb, "inlined leaf builtin");
 
         // Call the builtin func (ec, recv, arg1, arg2, ...)
@@ -3478,9 +3477,6 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
         return YJIT_KEEP_COMPILING;
     }
 
-    // pop BLOCKARG if exists
-    ctx_stack_pop(ctx, argb);
-
     // Stack overflow check
     // Note that vm_push_frame checks it against a decremented cfp, hence the multiply by 2.
     // #define CHECK_VM_STACK_OVERFLOW0(cfp, sp, margin)
@@ -3499,7 +3495,7 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
     // Store the next PC in the current frame
     jit_save_pc(jit, REG0);
 
-    if (block == rb_block_param_proxy) {
+    if (block_handler == rb_block_param_proxy) {
         gen_get_ep(cb, REG0, get_lvar_level(jit));
         mov(cb, REG0, mem_opnd(64, REG0, SIZEOF_VALUE * VM_ENV_DATA_INDEX_SPECVAL));
         mov(cb, member_opnd(REG_CFP, rb_control_frame_t, block_code), REG0);
@@ -3528,7 +3524,7 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
 
     // Write block handler at sp[-2]
     // sp[-2] = block_handler;
-    if (block == rb_block_param_proxy) {
+    if (block_handler == rb_block_param_proxy) {
         mov(cb, REG1, member_opnd(REG_CFP, rb_control_frame_t, block_code));
         mov(cb, mem_opnd(64, REG0, 8 * -2), REG1);
     } else if (block) {
@@ -3666,6 +3662,8 @@ gen_send_general(jitstate_t *jit, ctx_t *ctx, struct rb_call_data *cd, rb_iseq_t
 
     int argb = 0;
     if ((vm_ci_flag(ci) & VM_CALL_ARGS_BLOCKARG) != 0) {
+        RUBY_ASSERT(!block);
+
         argb = 1;
         if (ctx_get_opnd_type(ctx, OPND_STACK(0)).type == ETYPE_BLOCK_PARAM_PROXY) {
         } else {
