@@ -287,6 +287,12 @@ def lldb_inspect(debugger, target, result, val):
             append_command_output(debugger, "print *(struct RClass*)%0#x" % val.GetValueAsUnsigned(), result)
         elif flType == RUBY_T_STRING:
             result.write('T_STRING: %s' % flaginfo)
+            encidx = ((flags & RUBY_ENCODING_MASK)>>RUBY_ENCODING_SHIFT)
+            encname = target.FindFirstType("enum ruby_preserved_encindex").GetEnumMembers().GetTypeEnumMemberAtIndex(encidx).GetName()
+            if encname is not None:
+                result.write('[%s] ' % encname[14:])
+            else:
+                result.write('[enc=%d] ' % encidx)
             tRString = target.FindFirstType("struct RString").GetPointerType()
             ptr, len = string2cstr(val.Cast(tRString))
             if len == 0:
