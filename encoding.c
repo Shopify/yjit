@@ -797,11 +797,12 @@ rb_enc_get_from_index(int index)
     return must_encindex(index);
 }
 
+int rb_require_internal_silent(VALUE fname);
+
 static int
 load_encoding(const char *name)
 {
     VALUE enclib = rb_sprintf("enc/%s.so", name);
-    VALUE verbose = ruby_verbose;
     VALUE debug = ruby_debug;
     VALUE errinfo;
     char *s = RSTRING_PTR(enclib) + 4, *e = RSTRING_END(enclib) - 3;
@@ -814,11 +815,9 @@ load_encoding(const char *name)
 	++s;
     }
     enclib = rb_fstring(enclib);
-    ruby_verbose = Qfalse;
     ruby_debug = Qfalse;
     errinfo = rb_errinfo();
-    loaded = rb_require_internal(enclib);
-    ruby_verbose = verbose;
+    loaded = rb_require_internal_silent(enclib);
     ruby_debug = debug;
     rb_set_errinfo(errinfo);
 
@@ -1278,13 +1277,6 @@ rb_enc_codepoint_len(const char *p, const char *e, int *len_p, rb_encoding *enc)
     return rb_enc_mbc_to_codepoint(p, e, enc);
 }
 
-#undef rb_enc_codepoint
-unsigned int
-rb_enc_codepoint(const char *p, const char *e, rb_encoding *enc)
-{
-    return rb_enc_codepoint_len(p, e, 0, enc);
-}
-
 int
 rb_enc_codelen(int c, rb_encoding *enc)
 {
@@ -1293,13 +1285,6 @@ rb_enc_codelen(int c, rb_encoding *enc)
 	rb_raise(rb_eArgError, "invalid codepoint 0x%x in %s", c, rb_enc_name(enc));
     }
     return n;
-}
-
-#undef rb_enc_code_to_mbclen
-int
-rb_enc_code_to_mbclen(int code, rb_encoding *enc)
-{
-    return ONIGENC_CODE_TO_MBCLEN(enc, code);
 }
 
 int

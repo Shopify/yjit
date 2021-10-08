@@ -376,6 +376,8 @@ transcode_search_path(const char *sname, const char *dname,
     return pathlen; /* is -1 if not found */
 }
 
+int rb_require_internal_silent(VALUE fname);
+
 static const rb_transcoder *
 load_transcoder_entry(transcoder_entry_t *entry)
 {
@@ -393,7 +395,7 @@ load_transcoder_entry(transcoder_entry_t *entry)
         memcpy(path + sizeof(transcoder_lib_prefix) - 1, lib, len);
         rb_str_set_len(fn, total_len);
         OBJ_FREEZE(fn);
-        rb_require_string(fn);
+        rb_require_internal_silent(fn);
     }
 
     if (entry->transcoder)
@@ -2100,7 +2102,7 @@ make_econv_exception(rb_econv_t *ec)
                 dumped = rb_sprintf("U+%04X", cc);
             }
         }
-        if (dumped == Qnil)
+        if (NIL_P(dumped))
             dumped = rb_str_dump(bytes);
         if (strcmp(ec->last_error.source_encoding,
                    ec->source_encoding_name) == 0 &&
@@ -3119,7 +3121,7 @@ search_convpath_i(const char *sname, const char *dname, int depth, void *arg)
     VALUE *ary_p = arg;
     VALUE v;
 
-    if (*ary_p == Qnil) {
+    if (NIL_P(*ary_p)) {
         *ary_p = rb_ary_new();
     }
 

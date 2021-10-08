@@ -1115,7 +1115,7 @@ main()
 		AC_CHECK_FUNCS(cygwin_conv_path)
 		AC_LIBOBJ([langinfo])
 		],
-[mingw*], [	LIBS="-lshell32 -lws2_32 -liphlpapi -limagehlp -lshlwapi $LIBS"
+[mingw*], [	LIBS="-lshell32 -lws2_32 -liphlpapi -limagehlp -lshlwapi -lbcrypt $LIBS"
 		ac_cv_header_pwd_h=no
 		ac_cv_header_utime_h=no
 		ac_cv_header_sys_ioctl_h=no
@@ -1292,6 +1292,7 @@ AC_CHECK_HEADERS(utime.h)
 AS_CASE("$target_cpu", [x64|x86_64|i[3-6]86*], [
   AC_CHECK_HEADERS(x86intrin.h)
 ])
+RUBY_UNIVERSAL_CHECK_HEADER([x86_64, i386], x86intrin.h)
 
 AC_ARG_WITH([gmp],
   [AS_HELP_STRING([--without-gmp],
@@ -1394,7 +1395,7 @@ AS_CASE(["$target_os"],
 	])
     ])
 
-AC_C_BIGENDIAN
+AC_C_BIGENDIAN([], [], [], [AC_DEFINE(AC_APPLE_UNIVERSAL_BUILD, 1)])
 AC_C_CONST
 AC_C_CHAR_UNSIGNED
 AC_C_INLINE
