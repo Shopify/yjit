@@ -774,23 +774,29 @@ gen_dupn(jitstate_t *jit, ctx_t *ctx, codeblock_t *cb)
     return YJIT_KEEP_COMPILING;
 }
 
+static void
+stack_swap(ctx_t *ctx, codeblock_t *cb, int offset0, int offset1, x86opnd_t reg0, x86opnd_t reg1)
+{
+    x86opnd_t opnd0 = ctx_stack_opnd(ctx, offset0);
+    x86opnd_t opnd1 = ctx_stack_opnd(ctx, offset1);
+
+    temp_type_mapping_t mapping0 = ctx_get_opnd_mapping(ctx, OPND_STACK(offset0));
+    temp_type_mapping_t mapping1 = ctx_get_opnd_mapping(ctx, OPND_STACK(offset1));
+
+    mov(cb, reg0, opnd0);
+    mov(cb, reg1, opnd1);
+    mov(cb, opnd0, reg1);
+    mov(cb, opnd1, reg0);
+
+    ctx_set_opnd_mapping(ctx, OPND_STACK(offset0), mapping1);
+    ctx_set_opnd_mapping(ctx, OPND_STACK(offset1), mapping0);
+}
+
 // Swap top 2 stack entries
 static codegen_status_t
 gen_swap(jitstate_t *jit, ctx_t *ctx, codeblock_t *cb)
 {
-    x86opnd_t opnd0 = ctx_stack_opnd(ctx, 0);
-    x86opnd_t opnd1 = ctx_stack_opnd(ctx, 1);
-    temp_type_mapping_t mapping0 = ctx_get_opnd_mapping(ctx, OPND_STACK(0));
-    temp_type_mapping_t mapping1 = ctx_get_opnd_mapping(ctx, OPND_STACK(1));
-
-    mov(cb, REG0, opnd0);
-    mov(cb, REG1, opnd1);
-    mov(cb, opnd0, REG1);
-    mov(cb, opnd1, REG0);
-
-    ctx_set_opnd_mapping(ctx, OPND_STACK(0), mapping1);
-    ctx_set_opnd_mapping(ctx, OPND_STACK(1), mapping0);
-
+    stack_swap(ctx , cb, 0, 1, REG0, REG1);
     return YJIT_KEEP_COMPILING;
 }
 
@@ -3349,6 +3355,13 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
 {
     const rb_iseq_t *iseq = def_iseq_ptr(cme->def);
 
+    // When you have keyword arguments, there is an extra object that gets
+    // placed on the stack the represents a bitmap of the keywords that were not
+    // specified at the call site. We need to keep track of the fact that this
+    // value is present on the stack in order to properly set up the callee's
+    // stack pointer.
+    int kw_bits_shift = 0;
+
     if (vm_ci_flag(ci) & VM_CALL_TAILCALL) {
         // We can't handle tailcalls
         GEN_COUNTER_INC(cb, send_iseq_tailcall);
@@ -3358,7 +3371,16 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
     // Arity handling and optional parameter setup
     int num_params = iseq->body->param.size;
     uint32_t start_pc_offset = 0;
+
     if (iseq_lead_only_arg_setup_p(iseq)) {
+        // If we have keyword arguments being passed to a callee that only takes
+        // positionals, then we need to allocate a hash. For now we're going to
+        // call that too complex and bail.
+        if (vm_ci_flag(ci) & VM_CALL_KWARG) {
+            GEN_COUNTER_INC(cb, send_iseq_complex_callee);
+            return YJIT_CANT_COMPILE;
+        }
+
         num_params = iseq->body->param.lead_num;
 
         if (num_params != argc) {
@@ -3367,6 +3389,14 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
         }
     }
     else if (rb_iseq_only_optparam_p(iseq)) {
+        // If we have keyword arguments being passed to a callee that only takes
+        // positionals and optionals, then we need to allocate a hash. For now
+        // we're going to call that too complex and bail.
+        if (vm_ci_flag(ci) & VM_CALL_KWARG) {
+            GEN_COUNTER_INC(cb, send_iseq_complex_callee);
+            return YJIT_CANT_COMPILE;
+        }
+
         // These are iseqs with 0 or more required parameters followed by 1
         // or more optional parameters.
         // We follow the logic of vm_call_iseq_setup_normal_opt_start()
@@ -3387,9 +3417,114 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
         start_pc_offset = (uint32_t)iseq->body->param.opt_table[opts_filled];
     }
     else if (rb_iseq_only_kwparam_p(iseq)) {
-        // vm_callee_setup_arg() has a fast path for this.
-        GEN_COUNTER_INC(cb, send_iseq_only_keywords);
-        return YJIT_CANT_COMPILE;
+        const int lead_num = iseq->body->param.lead_num;
+
+        if (vm_ci_flag(ci) & VM_CALL_KWARG) {
+            // Here we're calling a method with keyword arguments and specifying
+            // keyword arguments at this call site.
+
+            // This struct represents the metadata about the caller-specified
+            // keyword arguments.
+            const struct rb_callinfo_kwarg *kw_arg = vm_ci_kwarg(ci);
+
+            // This struct represents the metadata about the callee-specified
+            // keyword parameters.
+            const struct rb_iseq_param_keyword *keyword = iseq->body->param.keyword;
+
+            if ((kw_arg->keyword_len != keyword->num) || (lead_num != argc - kw_arg->keyword_len)) {
+                // Here the method being called specifies optional and required
+                // keyword arguments and the callee is not specifying every one
+                // of them.
+                GEN_COUNTER_INC(cb, send_iseq_kwargs_req_and_opt_missing);
+                return YJIT_CANT_COMPILE;
+            }
+
+            // This is the list of keyword arguments that the callee specified
+            // in its initial declaration.
+            const ID *callee_kwargs = keyword->table;
+
+            // Here we're going to build up a list of the IDs that correspond to
+            // the caller-specified keyword arguments. If they're not in the
+            // same order as the order specified in the callee declaration, then
+            // we're going to need to generate some code to swap values around
+            // on the stack.
+            ID *caller_kwargs = ALLOCA_N(VALUE, kw_arg->keyword_len);
+            for (int kwarg_idx = 0; kwarg_idx < kw_arg->keyword_len; kwarg_idx++)
+                caller_kwargs[kwarg_idx] = SYM2ID(kw_arg->keywords[kwarg_idx]);
+
+            // First, we're going to be sure that the names of every
+            // caller-specified keyword argument correspond to a name in the
+            // list of callee-specified keyword parameters.
+            for (int caller_idx = 0; caller_idx < kw_arg->keyword_len; caller_idx++) {
+                int callee_idx;
+
+                for (callee_idx = 0; callee_idx < keyword->num; callee_idx++) {
+                    if (caller_kwargs[caller_idx] == callee_kwargs[callee_idx]) {
+                        break;
+                    }
+                }
+
+                // If the keyword was never found, then we know we have a
+                // mismatch in the names of the keyword arguments, so we need to
+                // bail.
+                if (callee_idx == keyword->num) {
+                    GEN_COUNTER_INC(cb, send_iseq_kwargs_mismatch);
+                    return YJIT_CANT_COMPILE;
+                }
+            }
+
+            // Next, we're going to loop through every keyword that was
+            // specified by the caller and make sure that it's in the correct
+            // place. If it's not we're going to swap it around with another one.
+            for (int kwarg_idx = 0; kwarg_idx < kw_arg->keyword_len; kwarg_idx++) {
+                ID callee_kwarg = callee_kwargs[kwarg_idx];
+
+                // If the argument is already in the right order, then we don't
+                // need to generate any code since the expected value is already
+                // in the right place on the stack.
+                if (callee_kwarg == caller_kwargs[kwarg_idx]) continue;
+
+                // In this case the argument is not in the right place, so we
+                // need to find its position where it _should_ be and swap with
+                // that location.
+                for (int swap_idx = kwarg_idx + 1; swap_idx < kw_arg->keyword_len; swap_idx++) {
+                    if (callee_kwarg == caller_kwargs[swap_idx]) {
+                        // First we're going to generate the code that is going
+                        // to perform the actual swapping at runtime.
+                        stack_swap(ctx, cb, argc - 1 - swap_idx - lead_num, argc - 1 - kwarg_idx - lead_num, REG1, R9);
+
+                        // Next we're going to do some bookkeeping on our end so
+                        // that we know the order that the arguments are
+                        // actually in now.
+                        ID tmp = caller_kwargs[kwarg_idx];
+                        caller_kwargs[kwarg_idx] = caller_kwargs[swap_idx];
+                        caller_kwargs[swap_idx] = tmp;
+
+                        break;
+                    }
+                }
+            }
+
+            // Keyword arguments cause a special extra local variable to be
+            // pushed onto the stack that represents the parameters that weren't
+            // explicitly given a value. Its value is a bitmap that corresponds
+            // to the indices of the missing parameters. In this case since we
+            // know every value was specified, we can just write the value 0.
+            kw_bits_shift = 1;
+            mov(cb, ctx_stack_opnd(ctx, -1), imm_opnd(INT2FIX(0)));
+        }
+        else if (argc == lead_num) {
+            // Here we are calling a method that accepts keyword arguments
+            // (optional or required) but we're not passing any keyword
+            // arguments at this call site
+
+            GEN_COUNTER_INC(cb, send_iseq_kwargs_none_passed);
+            return YJIT_CANT_COMPILE;
+        }
+        else {
+            GEN_COUNTER_INC(cb, send_iseq_complex_callee);
+            return YJIT_CANT_COMPILE;
+        }
     }
     else {
         // Only handle iseqs that have simple parameter setup.
@@ -3461,7 +3596,7 @@ gen_send_iseq(jitstate_t *jit, ctx_t *ctx, const struct rb_callinfo *ci, const r
     }
 
     // Adjust the callee's stack pointer
-    lea(cb, REG0, ctx_sp_opnd(ctx, sizeof(VALUE) * (3 + num_locals)));
+    lea(cb, REG0, ctx_sp_opnd(ctx, sizeof(VALUE) * (3 + num_locals + kw_bits_shift)));
 
     // Initialize local variables to Qnil
     for (int i = 0; i < num_locals; i++) {
@@ -3605,10 +3740,6 @@ gen_send_general(jitstate_t *jit, ctx_t *ctx, struct rb_call_data *cd, rb_iseq_t
         GEN_COUNTER_INC(cb, send_args_splat);
         return YJIT_CANT_COMPILE;
     }
-    if ((vm_ci_flag(ci) & VM_CALL_KWARG) != 0) {
-        GEN_COUNTER_INC(cb, send_keywords);
-        return YJIT_CANT_COMPILE;
-    }
     if ((vm_ci_flag(ci) & VM_CALL_ARGS_BLOCKARG) != 0) {
         GEN_COUNTER_INC(cb, send_block_arg);
         return YJIT_CANT_COMPILE;
@@ -3671,6 +3802,10 @@ gen_send_general(jitstate_t *jit, ctx_t *ctx, struct rb_call_data *cd, rb_iseq_t
           case VM_METHOD_TYPE_ISEQ:
             return gen_send_iseq(jit, ctx, ci, cme, block, argc);
           case VM_METHOD_TYPE_CFUNC:
+            if ((vm_ci_flag(ci) & VM_CALL_KWARG) != 0) {
+                GEN_COUNTER_INC(cb, send_cfunc_kwargs);
+                return YJIT_CANT_COMPILE;
+            }
             return gen_send_cfunc(jit, ctx, ci, cme, block, argc, &comptime_recv_klass);
           case VM_METHOD_TYPE_IVAR:
             if (argc != 0) {
@@ -3685,7 +3820,11 @@ gen_send_general(jitstate_t *jit, ctx_t *ctx, struct rb_call_data *cd, rb_iseq_t
                 return gen_get_ivar(jit, ctx, SEND_MAX_DEPTH, comptime_recv, ivar_name, recv_opnd, side_exit);
             }
           case VM_METHOD_TYPE_ATTRSET:
-            if (argc != 1 || !RB_TYPE_P(comptime_recv, T_OBJECT)) {
+            if ((vm_ci_flag(ci) & VM_CALL_KWARG) != 0) {
+                GEN_COUNTER_INC(cb, send_attrset_kwargs);
+                return YJIT_CANT_COMPILE;
+            }
+            else if (argc != 1 || !RB_TYPE_P(comptime_recv, T_OBJECT)) {
                 GEN_COUNTER_INC(cb, send_ivar_set_method);
                 return YJIT_CANT_COMPILE;
             }
