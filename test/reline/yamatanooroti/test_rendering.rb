@@ -424,10 +424,10 @@ begin
     def test_binding_for_vi_movement_mode
       write_inputrc <<~LINES
         set editing-mode vi
-        "\\C-j": vi-movement-mode
+        "\\C-a": vi-movement-mode
       LINES
       start_terminal(5, 30, %W{ruby -I#{@pwd}/lib #{@pwd}/test/reline/yamatanooroti/multiline_repl}, startup_message: 'Multiline REPL.')
-      write(":1234\C-jhhhi0")
+      write(":1234\C-ahhhi0")
       close
       assert_screen(<<~EOC)
         Multiline REPL.
@@ -730,7 +730,7 @@ begin
     end
 
     def test_meta_key
-      start_terminal(50, 200, %W{ruby -I#{@pwd}/lib #{@pwd}/test/reline/yamatanooroti/multiline_repl}, startup_message: 'Multiline REPL.')
+      start_terminal(30, 20, %W{ruby -I#{@pwd}/lib #{@pwd}/test/reline/yamatanooroti/multiline_repl}, startup_message: 'Multiline REPL.')
       write("def ge\M-bho")
       close
       assert_screen(<<~EOC)
@@ -740,7 +740,7 @@ begin
     end
 
     def test_force_enter
-      start_terminal(50, 200, %W{ruby -I#{@pwd}/lib #{@pwd}/test/reline/yamatanooroti/multiline_repl}, startup_message: 'Multiline REPL.')
+      start_terminal(30, 120, %W{ruby -I#{@pwd}/lib #{@pwd}/test/reline/yamatanooroti/multiline_repl}, startup_message: 'Multiline REPL.')
       write("def hoge\nend\C-p\C-e")
       write("\M-\x0D")
       close
@@ -752,32 +752,10 @@ begin
       EOC
     end
 
-    def test_cyrillic_chars
-      omit unless Reline::IOGate.win?
-      start_terminal(50, 50, %W{ruby -I#{@pwd}/lib #{@pwd}/test/reline/yamatanooroti/multiline_repl}, startup_message: 'Multiline REPL.')
-      write("`chcp 850`\n")
-      write("`chcp`\n")
-      write("def гопота; 3; end\n")
-      write("гопота\n")
-      close
-      assert_screen(<<~'EOC')
-        Multiline REPL.
-        prompt> `chcp 850`
-        => "Active code page: 850\n"
-        prompt> `chcp`
-        => "Active code page: 850\n"
-        prompt> def гопота; 3; end
-        => :гопота
-        prompt> гопота
-        => 3
-        prompt>
-      EOC
-    end
-
     def test_with_newline
       omit if Reline::IOGate.win?
       cmd = %Q{ruby -e 'print(%Q{abc def \\e\\r})' | ruby -I#{@pwd}/lib -rreline -e 'p Reline.readline(%{> })'}
-      start_terminal(50, 50, ['bash', '-c', cmd])
+      start_terminal(40, 50, ['bash', '-c', cmd])
       close
       assert_screen(<<~'EOC')
         > abc def
@@ -1057,6 +1035,33 @@ begin
       EOC
     end
 
+    def test_autocomplete_super_long_and_backspace
+      start_terminal(20, 30, %W{ruby -I#{@pwd}/lib #{@pwd}/test/reline/yamatanooroti/multiline_repl --autocomplete-super-long}, startup_message: 'Multiline REPL.')
+      shift_tab = [27, 91, 90]
+      write('S' + shift_tab.map(&:chr).join)
+      write("\C-h")
+      close
+      assert_screen(<<~'EOC')
+        Multiline REPL.
+        prompt> Str_BX
+                Str_BX
+                Str_BXA
+                Str_BXB
+                Str_BXC
+                Str_BXD
+                Str_BXE
+                Str_BXF
+                Str_BXG
+                Str_BXH
+                Str_BXI
+                Str_BXJ
+                Str_BXK
+                Str_BXL
+                Str_BXM
+                Str_BXN
+      EOC
+    end
+
     def test_dialog_callback_returns_nil
       start_terminal(20, 30, %W{ruby -I#{@pwd}/lib #{@pwd}/test/reline/yamatanooroti/multiline_repl --dialog nil}, startup_message: 'Multiline REPL.')
       write('a')
@@ -1064,6 +1069,17 @@ begin
       assert_screen(<<~'EOC')
         Multiline REPL.
         prompt> a
+      EOC
+    end
+
+    def test_rerender_argument_prompt_after_pasting
+      start_terminal(20, 30, %W{ruby -I#{@pwd}/lib #{@pwd}/test/reline/yamatanooroti/multiline_repl}, startup_message: 'Multiline REPL.')
+      write('abcdef')
+      write("\M-3\C-h")
+      close
+      assert_screen(<<~'EOC')
+        Multiline REPL.
+        prompt> abc
       EOC
     end
 

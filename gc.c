@@ -1868,7 +1868,7 @@ heap_add_freepage(rb_heap_t *heap, struct heap_page *page)
     page->free_next = heap->free_pages;
     heap->free_pages = page;
 
-    RUBY_DEBUG_LOG("page:%p freelist:%p", page, page->freelist);
+    RUBY_DEBUG_LOG("page:%p freelist:%p", (void *)page, (void *)page->freelist);
 
     asan_poison_memory_region(&page->freelist, sizeof(RVALUE*));
 }
@@ -2366,7 +2366,7 @@ heap_next_freepage(rb_objspace_t *objspace, rb_size_pool_t *size_pool, rb_heap_t
     heap->free_pages = page->free_next;
 
     GC_ASSERT(page->free_slots != 0);
-    RUBY_DEBUG_LOG("page:%p freelist:%p cnt:%d", page, page->freelist, page->free_slots);
+    RUBY_DEBUG_LOG("page:%p freelist:%p cnt:%d", (void *)page, (void *)page->freelist, page->free_slots);
 
     asan_unpoison_memory_region(&page->freelist, sizeof(RVALUE*), false);
 
@@ -4354,7 +4354,7 @@ id2ref(VALUE objid)
         ptr = NUM2PTR(objid);
         if (ptr == Qtrue) return Qtrue;
         if (ptr == Qfalse) return Qfalse;
-        if (ptr == Qnil) return Qnil;
+        if (NIL_P(ptr)) return Qnil;
         if (FIXNUM_P(ptr)) return (VALUE)ptr;
         if (FLONUM_P(ptr)) return (VALUE)ptr;
 
@@ -4802,7 +4802,7 @@ count_objects(int argc, VALUE *argv, VALUE os)
 	total += page->total_slots;
     }
 
-    if (hash == Qnil) {
+    if (NIL_P(hash)) {
         hash = rb_hash_new();
     }
     else if (!RHASH_EMPTY_P(hash)) {
@@ -5701,7 +5701,7 @@ gc_sweep_step(rb_objspace_t *objspace, rb_size_pool_t *size_pool, rb_heap_t *hea
     do {
         GC_ASSERT(sweep_page->size_pool == size_pool);
 
-        RUBY_DEBUG_LOG("sweep_page:%p", sweep_page);
+        RUBY_DEBUG_LOG("sweep_page:%p", (void *)sweep_page);
 
         struct gc_sweep_context ctx = {
             .page = sweep_page,
@@ -8713,7 +8713,7 @@ rb_gc_ractor_newobj_cache_clear(rb_ractor_newobj_cache_t *newobj_cache)
 {
     struct heap_page *page = newobj_cache->using_page;
     RVALUE *freelist = newobj_cache->freelist;
-    RUBY_DEBUG_LOG("ractor using_page:%p freelist:%p", page, freelist);
+    RUBY_DEBUG_LOG("ractor using_page:%p freelist:%p", (void *)page, (void *)freelist);
 
     heap_page_freelist_append(page, freelist);
 
@@ -8784,7 +8784,7 @@ rb_gc_register_mark_object(VALUE obj)
         VALUE ary_ary = GET_VM()->mark_object_ary;
         VALUE ary = rb_ary_last(0, 0, ary_ary);
 
-        if (ary == Qnil || RARRAY_LEN(ary) >= MARK_OBJECT_ARY_BUCKET_SIZE) {
+        if (NIL_P(ary) || RARRAY_LEN(ary) >= MARK_OBJECT_ARY_BUCKET_SIZE) {
             ary = rb_ary_tmp_new(MARK_OBJECT_ARY_BUCKET_SIZE);
             rb_ary_push(ary_ary, ary);
         }
@@ -10383,7 +10383,7 @@ gc_info_decode(rb_objspace_t *objspace, const VALUE hash_or_key, const unsigned 
         rb_raise(rb_eTypeError, "non-hash or symbol given");
     }
 
-    if (sym_major_by == Qnil) {
+    if (NIL_P(sym_major_by)) {
 #define S(s) sym_##s = ID2SYM(rb_intern_const(#s))
         S(major_by);
         S(gc_by);
@@ -13067,8 +13067,6 @@ rb_raw_iseq_info(char *buff, const int buff_size, const rb_iseq_t *iseq)
 		 n ? FIX2INT(n) : 0 );
     }
 }
-
-bool rb_ractor_p(VALUE rv);
 
 static int
 str_len_no_raise(VALUE str)

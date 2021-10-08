@@ -858,4 +858,73 @@ class TestMarshal < Test::Unit::TestCase
       assert_nil(e2.backtrace_locations) # temporal
     end
   end
+
+  class TestMarshalFreezeProc < Test::Unit::TestCase
+    include MarshalTestLib
+
+    def encode(o)
+      Marshal.dump(o)
+    end
+
+    def decode(s)
+      Marshal.load(s, :freeze.to_proc)
+    end
+  end
+
+  def _test_hash_compared_by_identity(h)
+    h.compare_by_identity
+    h["a" + "0"] = 1
+    h["a" + "0"] = 2
+    h = Marshal.load(Marshal.dump(h))
+    assert_predicate(h, :compare_by_identity?)
+    a = h.to_a
+    assert_equal([["a0", 1], ["a0", 2]], a.sort)
+    assert_not_same(a[1][0], a[0][0])
+  end
+
+  def test_hash_compared_by_identity
+    _test_hash_compared_by_identity(Hash.new)
+  end
+
+  def test_hash_default_compared_by_identity
+    _test_hash_compared_by_identity(Hash.new(true))
+  end
+
+  class TestMarshalFreeze < Test::Unit::TestCase
+    include MarshalTestLib
+
+    def encode(o)
+      Marshal.dump(o)
+    end
+
+    def decode(s)
+      Marshal.load(s, freeze: true)
+    end
+
+    def test_return_objects_are_frozen
+      source = ["foo", {}, /foo/, 1..2]
+      objects = decode(encode(source))
+      assert_equal source, objects
+      assert_predicate objects, :frozen?
+      objects.each do |obj|
+        assert_predicate obj, :frozen?
+      end
+    end
+
+    def test_proc_returned_object_are_not_frozen
+      source = ["foo", {}, /foo/, 1..2]
+      objects = Marshal.load(encode(source), ->(o) { o.dup }, freeze: true)
+      assert_equal source, objects
+      refute_predicate objects, :frozen?
+      objects.each do |obj|
+        refute_predicate obj, :frozen?
+      end
+    end
+
+    def test_modules_and_classes_are_not_frozen
+      objects = Marshal.load(encode([Object, Kernel]), freeze: true)
+      refute_predicate Object, :frozen?
+      refute_predicate Kernel, :frozen?
+    end
+  end
 end

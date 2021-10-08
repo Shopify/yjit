@@ -1007,7 +1007,7 @@ env_copy(const VALUE *src_ep, VALUE read_only_variables)
     volatile VALUE prev_env = Qnil;
 
     if (read_only_variables) {
-        for (int i=0; i<RARRAY_LENINT(read_only_variables); i++) {
+        for (int i=RARRAY_LENINT(read_only_variables)-1; i>=0; i--) {
             ID id = SYM2ID(rb_str_intern(RARRAY_AREF(read_only_variables, i)));
 
             for (unsigned int j=0; j<src_env->iseq->body->local_table_size; j++) {
@@ -2488,6 +2488,7 @@ rb_vm_update_references(void *ptr)
         vm->expanded_load_path = rb_gc_location(vm->expanded_load_path);
         vm->loaded_features = rb_gc_location(vm->loaded_features);
         vm->loaded_features_snapshot = rb_gc_location(vm->loaded_features_snapshot);
+        vm->loaded_features_realpaths = rb_gc_location(vm->loaded_features_realpaths);
         vm->top_self = rb_gc_location(vm->top_self);
         vm->orig_progname = rb_gc_location(vm->orig_progname);
 
@@ -2575,6 +2576,7 @@ rb_vm_mark(void *ptr)
         rb_gc_mark_movable(vm->expanded_load_path);
         rb_gc_mark_movable(vm->loaded_features);
         rb_gc_mark_movable(vm->loaded_features_snapshot);
+        rb_gc_mark_movable(vm->loaded_features_realpaths);
         rb_gc_mark_movable(vm->top_self);
         rb_gc_mark_movable(vm->orig_progname);
         RUBY_MARK_MOVABLE_UNLESS_NULL(vm->coverages);
@@ -3819,11 +3821,11 @@ vm_analysis_insn(int insn)
     CONST_ID(usage_hash, "USAGE_ANALYSIS_INSN");
     CONST_ID(bigram_hash, "USAGE_ANALYSIS_INSN_BIGRAM");
     uh = rb_const_get(rb_cRubyVM, usage_hash);
-    if ((ihash = rb_hash_aref(uh, INT2FIX(insn))) == Qnil) {
+    if (NIL_P(ihash = rb_hash_aref(uh, INT2FIX(insn)))) {
 	ihash = rb_hash_new();
 	HASH_ASET(uh, INT2FIX(insn), ihash);
     }
-    if ((cv = rb_hash_aref(ihash, INT2FIX(-1))) == Qnil) {
+    if (NIL_P(cv = rb_hash_aref(ihash, INT2FIX(-1)))) {
 	cv = INT2FIX(0);
     }
     HASH_ASET(ihash, INT2FIX(-1), INT2FIX(FIX2INT(cv) + 1));
@@ -3839,7 +3841,7 @@ vm_analysis_insn(int insn)
 	bi = rb_ary_new4(2, &ary[0]);
 
 	uh = rb_const_get(rb_cRubyVM, bigram_hash);
-	if ((cv = rb_hash_aref(uh, bi)) == Qnil) {
+	if (NIL_P(cv = rb_hash_aref(uh, bi))) {
 	    cv = INT2FIX(0);
 	}
 	HASH_ASET(uh, bi, INT2FIX(FIX2INT(cv) + 1));
@@ -3861,11 +3863,11 @@ vm_analysis_operand(int insn, int n, VALUE op)
     CONST_ID(usage_hash, "USAGE_ANALYSIS_INSN");
 
     uh = rb_const_get(rb_cRubyVM, usage_hash);
-    if ((ihash = rb_hash_aref(uh, INT2FIX(insn))) == Qnil) {
+    if (NIL_P(ihash = rb_hash_aref(uh, INT2FIX(insn)))) {
 	ihash = rb_hash_new();
 	HASH_ASET(uh, INT2FIX(insn), ihash);
     }
-    if ((ophash = rb_hash_aref(ihash, INT2FIX(n))) == Qnil) {
+    if (NIL_P(ophash = rb_hash_aref(ihash, INT2FIX(n)))) {
 	ophash = rb_hash_new();
 	HASH_ASET(ihash, INT2FIX(n), ophash);
     }
@@ -3873,7 +3875,7 @@ vm_analysis_operand(int insn, int n, VALUE op)
     valstr = rb_insn_operand_intern(GET_EC()->cfp->iseq, insn, n, op, 0, 0, 0, 0);
 
     /* set count */
-    if ((cv = rb_hash_aref(ophash, valstr)) == Qnil) {
+    if (NIL_P(cv = rb_hash_aref(ophash, valstr))) {
 	cv = INT2FIX(0);
     }
     HASH_ASET(ophash, valstr, INT2FIX(FIX2INT(cv) + 1));
@@ -3917,7 +3919,7 @@ vm_analysis_register(int reg, int isset)
     valstr = syms[reg][isset];
 
     uh = rb_const_get(rb_cRubyVM, usage_hash);
-    if ((cv = rb_hash_aref(uh, valstr)) == Qnil) {
+    if (NIL_P(cv = rb_hash_aref(uh, valstr))) {
 	cv = INT2FIX(0);
     }
     HASH_ASET(uh, valstr, INT2FIX(FIX2INT(cv) + 1));

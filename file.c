@@ -3355,7 +3355,6 @@ getcwdofdrv(int drv)
     }
     return drvcwd;
 }
-#endif
 
 static inline int
 not_same_drive(VALUE path, int drive)
@@ -3369,6 +3368,7 @@ not_same_drive(VALUE path, int drive)
 	return has_unc(p);
     }
 }
+#endif
 #endif
 
 static inline char *
@@ -4400,6 +4400,21 @@ rb_check_realpath_emulate(VALUE basedir, VALUE path, rb_encoding *origenc, enum 
 
 static VALUE rb_file_join(VALUE ary);
 
+#ifndef HAVE_REALPATH
+static VALUE
+rb_check_realpath_emulate_try(VALUE arg)
+{
+    VALUE *args = (VALUE *)arg;
+    return rb_check_realpath_emulate(args[0], args[1], (const rb_encoding *)args[2], RB_REALPATH_CHECK);
+}
+
+static VALUE
+rb_check_realpath_emulate_rescue(VALUE arg, VALUE exc)
+{
+    return Qnil;
+}
+#endif /* HAVE_REALPATH */
+
 static VALUE
 rb_check_realpath_internal(VALUE basedir, VALUE path, rb_encoding *origenc, enum rb_realpath_mode mode)
 {
@@ -4466,7 +4481,18 @@ rb_check_realpath_internal(VALUE basedir, VALUE path, rb_encoding *origenc, enum
     RB_GC_GUARD(unresolved_path);
     return resolved;
 #else
-    return rb_check_realpath_emulate(basedir, path, origenc, mode);
+    if (mode == RB_REALPATH_CHECK) {
+        VALUE arg[3];
+        arg[0] = basedir;
+        arg[1] = path;
+        arg[2] = (VALUE)origenc;
+
+        return rb_rescue(rb_check_realpath_emulate_try, (VALUE)arg,
+                         rb_check_realpath_emulate_rescue, Qnil);
+    }
+    else {
+        return rb_check_realpath_emulate(basedir, path, origenc, mode);
+    }
 #endif /* HAVE_REALPATH */
 }
 
@@ -6369,6 +6395,10 @@ is_explicit_relative(const char *path)
 static VALUE
 copy_path_class(VALUE path, VALUE orig)
 {
+    int encidx = rb_enc_get_index(orig);
+    if (encidx == ENCINDEX_ASCII || encidx == ENCINDEX_US_ASCII)
+        encidx = rb_filesystem_encindex();
+    rb_enc_associate_index(path, encidx);
     str_shrink(path);
     RBASIC_SET_CLASS(path, rb_obj_class(orig));
     OBJ_FREEZE(path);
