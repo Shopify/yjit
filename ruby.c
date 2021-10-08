@@ -234,9 +234,14 @@ cmdline_options_init(ruby_cmdline_options_t *opt)
     opt->features.set = DEFAULT_FEATURES;
 #ifdef MJIT_FORCE_ENABLE /* to use with: ./configure cppflags="-DMJIT_FORCE_ENABLE" */
     opt->features.set |= FEATURE_BIT(jit);
-#else
+#elif defined(YJIT_FORCE_ENABLE)
     opt->features.set |= FEATURE_BIT(yjit);
 #endif
+
+    if (getenv("RUBY_YJIT_ENABLE")) {
+        opt->features.set |= FEATURE_BIT(yjit);
+    }
+
     return opt;
 }
 
@@ -335,7 +340,7 @@ usage(const char *name, int help, int highlight, int columns)
 	M("rubyopt", "",        "RUBYOPT environment variable (default: enabled)"),
 	M("frozen-string-literal", "", "freeze all string literals (default: disabled)"),
         M("jit", "",            "JIT compiler (default: disabled)"),
-        M("yjit", "",           "in-process JIT compiler (default: enabled)"),
+        M("yjit", "",           "in-process JIT compiler (default: disabled)"),
     };
     static const struct message warn_categories[] = {
         M("deprecated", "",       "deprecated features"),
@@ -351,7 +356,7 @@ usage(const char *name, int help, int highlight, int columns)
         M("--jit-min-calls=num", "", "Number of calls to trigger JIT (for testing, default: 10000)"),
     };
     static const struct message yjit_options[] = {
-#if RUBY_DEBUG
+#if YJIT_STATS
         M("--yjit-stats",             "", "Enable collecting YJIT statistics"),
 #endif
         M("--yjit-exec-mem-size=num", "", "Size of executable memory block in MiB (default: 256)"),
