@@ -4,7 +4,7 @@ jobs:
   make:
     strategy:
       matrix:
-        test_task: ["check", "test-bundled-gems", "test-all", "test-spec"] # "test-bundler-parallel",
+        test_task: ["check"] # "test-bundler-parallel",
         os:
           - ubuntu-20.04
 #         - ubuntu-18.04
@@ -19,6 +19,11 @@ jobs:
           - test_task: "test-all TESTS=--repeat-count=2"
             os: ubuntu-20.04
             configure: ""
+            yjit_enable_env: RUBY_YJIT_ENABLE
+          - test_task: "test-bundled-gems"
+            os: ubuntu-20.04
+            configure: "cppflags=-DRUBY_DEBUG"
+            yjit_enable_env: RUBY_YJIT_ENABLE
       fail-fast: false
     env:
       GITPULLOPTIONS: --no-tags origin ${{github.ref}}
@@ -62,6 +67,9 @@ jobs:
         run: |
           ./miniruby -e '(("a".."z").to_a+("A".."Z").to_a+("0".."9").to_a+%w[foo bar test zzz]).each{|basename|File.write("#{basename}.rb", "raise %(do not load #{basename}.rb)")}'
         if: ${{ matrix.test_task == 'check' }}
+      - name: Enable YJIT through ENV
+        run: echo "RUBY_YJIT_ENABLE=1" >> $GITHUB_ENV
+        if: ${{ matrix.yjit_enable_env }}
       - run: make $JOBS -s ${{ matrix.test_task }} RUN_OPTS="$RUN_OPTS"
         timeout-minutes: 60
         env:
