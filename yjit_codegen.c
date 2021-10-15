@@ -1486,12 +1486,6 @@ enum {
     SEND_MAX_DEPTH = 5,           // up to 5 different classes
 };
 
-static uint32_t
-yjit_force_iv_index(VALUE comptime_receiver, VALUE klass, ID name)
-{
-    return rb_obj_ivar_index(klass, name);
-}
-
 VALUE rb_vm_set_ivar_idx(VALUE obj, uint32_t idx, VALUE val);
 
 // Codegen for setting an instance variable.
@@ -1500,7 +1494,7 @@ VALUE rb_vm_set_ivar_idx(VALUE obj, uint32_t idx, VALUE val);
 //   - receiver has the same class as CLASS_OF(comptime_receiver)
 //   - no stack push or pops to ctx since the entry to the codegen of the instruction being compiled
 static codegen_status_t
-gen_set_ivar(jitstate_t *jit, ctx_t *ctx, VALUE recv, VALUE klass, ID ivar_name)
+gen_set_ivar(jitstate_t *jit, ctx_t *ctx, VALUE klass, ID ivar_name)
 {
     // Save the PC and SP because the callee may allocate
     // Note that this modifies REG_SP, which is why we do it first
@@ -1510,7 +1504,7 @@ gen_set_ivar(jitstate_t *jit, ctx_t *ctx, VALUE recv, VALUE klass, ID ivar_name)
     x86opnd_t val_opnd = ctx_stack_pop(ctx, 1);
     x86opnd_t recv_opnd = ctx_stack_pop(ctx, 1);
 
-    uint32_t ivar_index = yjit_force_iv_index(recv, klass, ivar_name);
+    uint32_t ivar_index = rb_obj_ivar_index(klass, ivar_name);
 
     // Call rb_vm_set_ivar_idx with the receiver, the index of the ivar, and the value
     mov(cb, C_ARG_REGS[0], recv_opnd);
@@ -1583,7 +1577,7 @@ gen_get_ivar(jitstate_t *jit, ctx_t *ctx, const int max_chain_depth, VALUE compt
     jit_chain_guard(JCC_JNE, jit, &starting_context, max_chain_depth, side_exit);
     */
 
-    uint32_t ivar_index = yjit_force_iv_index(comptime_receiver, CLASS_OF(comptime_receiver), ivar_name);
+    uint32_t ivar_index = rb_obj_ivar_index(CLASS_OF(comptime_receiver), ivar_name);
 
     // Pop receiver if it's on the temp stack
     if (!reg0_opnd.is_self) {
@@ -3838,7 +3832,7 @@ gen_send_general(jitstate_t *jit, ctx_t *ctx, struct rb_call_data *cd, rb_iseq_t
             }
             else {
                 ID ivar_name = cme->def->body.attr.id;
-                return gen_set_ivar(jit, ctx, comptime_recv, comptime_recv_klass, ivar_name);
+                return gen_set_ivar(jit, ctx, comptime_recv_klass, ivar_name);
             }
           case VM_METHOD_TYPE_BMETHOD:
             GEN_COUNTER_INC(cb, send_bmethod);
