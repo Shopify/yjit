@@ -1489,20 +1489,7 @@ enum {
 static uint32_t
 yjit_force_iv_index(VALUE comptime_receiver, VALUE klass, ID name)
 {
-    ID id = name;
-    struct rb_iv_index_tbl_entry *ent;
-    struct st_table *iv_index_tbl = ROBJECT_IV_INDEX_TBL(comptime_receiver);
-
-    // Make sure there is a mapping for this ivar in the index table
-    if (!iv_index_tbl || !rb_iv_index_tbl_lookup(iv_index_tbl, id, &ent)) {
-        rb_ivar_set(comptime_receiver, id, Qundef);
-        iv_index_tbl = ROBJECT_IV_INDEX_TBL(comptime_receiver);
-        RUBY_ASSERT(iv_index_tbl);
-        // Redo the lookup
-        RUBY_ASSERT_ALWAYS(rb_iv_index_tbl_lookup(iv_index_tbl, id, &ent));
-    }
-
-    return ent->index;
+    return rb_obj_ivar_index(klass, name);
 }
 
 VALUE rb_vm_set_ivar_idx(VALUE obj, uint32_t idx, VALUE val);

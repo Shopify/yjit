@@ -1446,6 +1446,28 @@ rb_init_iv_list(VALUE obj)
     init_iv_list(obj, len, newsize, index_tbl);
 }
 
+/**
+ * Returns the index of the instance variable +id+ on T_OBJECT instances of the
+ * given class. The entry for the instance variable will be created if it does
+ * not already exist.
+ */
+uint32_t
+rb_obj_ivar_index(VALUE klass, ID id)
+{
+    klass = rb_class_real(klass);
+    struct ivar_update ivup;
+    ivup.iv_extended = 0;
+    ivup.u.iv_index_tbl = iv_index_tbl_make(klass);
+
+    RB_VM_LOCK_ENTER();
+    {
+        iv_index_tbl_extend(&ivup, id, klass);
+    }
+    RB_VM_LOCK_LEAVE();
+
+    return (uint32_t)ivup.index;
+}
+
 static VALUE
 obj_ivar_set(VALUE obj, ID id, VALUE val)
 {
