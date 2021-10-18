@@ -1290,7 +1290,7 @@ rb_attr_delete(VALUE obj, ID id)
 }
 
 static st_table *
-iv_index_tbl_make(VALUE obj, VALUE klass)
+iv_index_tbl_make(VALUE klass)
 {
     st_table *iv_index_tbl;
 
@@ -1338,7 +1338,7 @@ generic_ivar_set(VALUE obj, ID id, VALUE val)
     VALUE klass = rb_obj_class(obj);
     struct ivar_update ivup;
     ivup.iv_extended = 0;
-    ivup.u.iv_index_tbl = iv_index_tbl_make(obj, klass);
+    ivup.u.iv_index_tbl = iv_index_tbl_make(klass);
 
     RB_VM_LOCK_ENTER();
     {
@@ -1453,7 +1453,7 @@ obj_ivar_set(VALUE obj, ID id, VALUE val)
     struct ivar_update ivup;
     uint32_t len;
     ivup.iv_extended = 0;
-    ivup.u.iv_index_tbl = iv_index_tbl_make(obj, klass);
+    ivup.u.iv_index_tbl = iv_index_tbl_make(klass);
 
     RB_VM_LOCK_ENTER();
     {
@@ -1663,7 +1663,7 @@ rb_copy_generic_ivar(VALUE clone, VALUE obj)
 	}
 
         VALUE klass = rb_obj_class(clone);
-	c.iv_index_tbl = iv_index_tbl_make(clone, klass);
+	c.iv_index_tbl = iv_index_tbl_make(klass);
         c.obj = clone;
         c.klass = klass;
 	gen_ivar_each(obj, gen_ivar_copy, (st_data_t)&c);
