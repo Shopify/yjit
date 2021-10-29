@@ -7,10 +7,13 @@
 YJIT - Yet Another Ruby JIT
 ===========================
 
-https://github.com/ruby/ruby/blob/master/doc/yjit/yjit.md
+YJIT has finally been merged upstream, and should be an official part of the Ruby 3.1 release.
 
+For more information on how to build and use YJIT, see the [YJIT README](https://github.com/ruby/ruby/blob/master/doc/yjit/yjit.md).
 
-To cite this repository in your publications, please use this bibtex snippet:
+If you want to report bugs or ask questions about YJIT, please [open an issue](https://github.com/Shopify/yjit/issues) on this repository. When reporting bugs, please include as much detail as possible regarding your current setup, and the console commands you used to run YJIT.
+
+To cite this project in your publications, please use this bibtex snippet:
 
 ```
 @misc{yjit_ruby_jit,
