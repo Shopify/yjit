@@ -11,22 +11,25 @@ YJIT has been merged upstream, and is now an official part of Ruby 3.1 and 3.2.
 
 For more information on how to build and use YJIT, see the [YJIT README](https://github.com/ruby/ruby/blob/master/doc/yjit/yjit.md).
 
-If you want to report bugs or ask questions about YJIT, please [open an issue](https://github.com/Shopify/yjit/issues) on this repository. When reporting bugs, please include as much detail as possible regarding your current setup, and the console commands you used to run YJIT.
+If you want to report bugs or ask questions about YJIT, please [open an issue](https://github.com/Shopify/ruby/issues) on the Shopify/ruby repository. When reporting bugs, please include as much detail as possible regarding your current setup (e.g. OS, platform, Ruby version), and the console commands you used to run YJIT.
 
 To cite this project in your publications, please use this bibtex snippet:
 
 ```
-@inbook{yjit_vmil2021,
-author = {Chevalier-Boisvert, Maxime and Gibbs, Noah and Boussier, Jean and Wu, Si Xing (Alan) and Patterson, Aaron and Newton, Kevin and Hawthorn, John},
-title = {YJIT: A Basic Block Versioning JIT Compiler for CRuby},
-year = {2021},
-isbn = {9781450391092},
+@inproceedings{yjit_mplr_2023,
+author = {Chevalier-Boisvert, Maxime and Kokubun, Takashi and Gibbs, Noah and Wu, Si Xing (Alan) and Patterson, Aaron and Issroff, Jemma},
+title = {Evaluating YJIT’s Performance in a Production Context: A Pragmatic Approach},
+year = {2023},
+isbn = {9798400703805},
 publisher = {Association for Computing Machinery},
 address = {New York, NY, USA},
-url = {https://doi.org/10.1145/3486606.3486781},
-abstract = {Ruby is a dynamically typed programming language with a large breadth of features which has grown in popularity with the rise of the modern web, and remains at the core of the implementation of many widely-used websites.  CRuby, the default implementation of the language, features a JIT compiler known as MJIT, but developers often do not enable it in production environments, because it does not always yield performance improvements on real-world software. Attempts to independently reimplement the Ruby language, such as JRuby and TruffleRuby have shown impressive performance results on benchmarks, but often lag behind CRuby when it comes to supporting new additions to the language, which limits their adoption.  We introduce YJIT, a new JIT compiler built inside CRuby based on a Lazy Basic Block Versioning (LBBV) architecture. We show that while our compiler does not match the peak performance of TruffleRuby, it offers near-100% compatibility with existing Ruby code, impressively fast warmup, and speedups from 15% to 19% on sizeable benchmarks based on real-world software.},
-booktitle = {Proceedings of the 13th ACM SIGPLAN International Workshop on Virtual Machines and Intermediate Languages},
-pages = {25–32},
-numpages = {8}
+url = {https://doi.org/10.1145/3617651.3622982},
+doi = {10.1145/3617651.3622982},
+booktitle = {Proceedings of the 20th ACM SIGPLAN International Conference on Managed Programming Languages and Runtimes},
+pages = {20–33},
+numpages = {14},
+keywords = {dynamically typed, optimization, just-in-time, virtual machine, ruby, compiler, bytecode},
+location = {Cascais, Portugal},
+series = {MPLR 2023}
 }
 ```
